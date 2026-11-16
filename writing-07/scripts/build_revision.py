@@ -8,7 +8,9 @@ locator table, evidence list and result.json. Standard library only, no
 network, no CWD assumptions, exit code stays 0 even on failure.
 """
 
-import argparse, json, re, sys, time, traceback
+import argparse, json, re, sys, tempfile, time, traceback
+
+from datetime import datetime
 
 from pathlib import Path
 
@@ -16,6 +18,8 @@ from pathlib import Path
 TOOL_VERSION = "1.0.0"
 
 START_TS = time.time()
+
+START_WALL = datetime.now().astimezone().isoformat(timespec="seconds")
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 
@@ -98,11 +102,26 @@ def execute(a):
     out.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)
     E, D, I, P, U = [], [], [], [], []
+    events = []
+    log_event(events, "start", version=TOOL_VERSION, input=str(a.input), output=str(a.output),
+              work=str(a.work), deliverable_name=a.deliverable_name, stage_requested=a.stage)
+    probe = probe_degraded_paths()
+    log_event(events, "degraded_probe", all(v.get("ok") for v in probe.values() if isinstance(v, dict)),
+              probes=len(probe), failed=len([1 for v in probe.values()
+                                             if isinstance(v, dict) and not v.get("ok")]))
     info = scan_input(a.input)
     E += info["errors"]
     case = info["case"] if isinstance(info["case"], dict) else {}
     con = case.get("output_contract") if isinstance(case.get("output_contract"), dict) else {}
     cid, dn = str(case.get("case_id") or "UNKNOWN-CASE"), a.deliverable_name
+    base0, cm0 = info.get("baseline"), info.get("comments") or []
+    sources = {"started_at": START_WALL, "events": events, "probe": probe,
+               "input_dir": str(a.input),
+               "baseline": {"name": Path(base0["path"]).name if base0 else "not supplied",
+                            "text": str((base0 or {}).get("text") or "")},
+               "comments": [{"name": Path(c["path"]).name, "text": c["text"]} for c in cm0]}
+    log_event(events, "scan_input", True, files=len(info.get("files") or []), case=bool(case),
+              baseline=bool(base0), comments=len(cm0), errors=len(info.get("errors") or []))
     ctx = {"case_id": cid, "deliverable": dn, "preserved_facts": [], "evidence_map": [],
            "change_log": [], "status": "partial", "uncertainty": U}
     pre = {"status": "partial", "stage": "partial"}
@@ -110,15 +129,23 @@ def execute(a):
     pre.update({"pending_human": [{"item": "pipeline", "reason": "initial partial placeholder"}],
                 "errors": E, "degradations": [], "runtime": {"version": TOOL_VERSION, "elapsed_s": elapsed()}})
     dump_json(out / "result.json", pre)
+    _pre, _perr = read_json(out / "result.json")
+    precheck = {"ok": isinstance(_pre, dict) and _perr is None,
+                "status": (_pre or {}).get("status") if isinstance(_pre, dict) else None,
+                "file": "result.json"}
+    sources["precheck"] = precheck
+    log_event(events, "partial_result", precheck["ok"], status=precheck["status"], file="result.json")
     base, cm = info.get("baseline"), info.get("comments") or []
     if not base or not str(base.get("text") or "").strip():
         E.append({"where": "input", "error": "baseline manuscript not located in input"})
         P.append({"item": "manuscript baseline", "reason": "missing; no revision attempted"})
         msg = "# No usable baseline\n\nThe input contained no manuscript baseline, so no revision was produced.\n"
+        log_event(events, "abort_no_baseline", False, reason="baseline manuscript not located",
+                  errors=len(E))
         if sup:
             return sup.publish(out, cid, dn, con, ctx, "input_error", E, D, I, P, U, [], [],
                           msg, "input_error", "not supplied", "not supplied", "en", [], [],
-                          case, [])
+                          case, [], sources=sources)
         dump_text(out / dn, msg)
         return 0
     bstr, bn = base["text"], Path(base["path"]).name
@@ -130,6 +157,8 @@ def execute(a):
     lang = guess_lang(cstr or bstr)
     bs = split_blocks(bstr)
     led = sup.make_ledger(split_comments(cstr), bs, lang) if sup else []
+    log_event(events, "ledger", True, comments=len(led),
+              subs=sum(len(c.get("sub_requirements") or []) for c in led), lang=lang)
     if sup is None:
         I.append({"kind": "helper_missing", "detail": "audit_bundle.py not importable"})
     pp = Path(a.plan) if a.plan else work / "edit_plan.json"
@@ -145,6 +174,9 @@ def execute(a):
         E.append({"where": "edit_plan", "error": "edit plan missing; run the plan stage first"})
     stage = a.stage if a.stage != "auto" else (
         "finalize" if (plan.get("edits") or plan.get("sub_overrides")) else "draft")
+    log_event(events, "plan", True, file=(str(pp) if pp.is_file() else ""),
+              found=bool(pp.is_file()), edits=len(plan.get("edits") or []),
+              overrides=len(plan.get("sub_overrides") or []), stage=stage)
     subs = sup.refresh_ledger(led) if sup else {}
     for o in plan.get("sub_overrides") or []:
         o = o if isinstance(o, dict) else {}
@@ -217,6 +249,8 @@ def execute(a):
                       "reason": s.get("evidence_note") or "requires material outside the baseline"})
     allsub = [s for c in led for s in c["sub_requirements"]]
     applied = len([c for c in changes if c["hit"]])
+    log_event(events, "apply", True, stage=stage, edits=len(changes), applied=applied,
+              pending=len(P), issues=len(I), degradations=len(D))
     st = "insufficient_evidence" if (not cm or not led) else (
         "partial" if (stage != "finalize" or applied < len(changes) or P) else "ok")
     if sup is None:
@@ -235,7 +269,7 @@ def execute(a):
             "source_quote": "", "basis": "baseline_unchanged", "comment_id": c["comment_id"]}
            for c in led for s in c["sub_requirements"] if not s["change_ids"] and s["anchor"]]
     return sup.publish(out, cid, dn, con, ctx, st, E, D, I, P, U, led, changes, rtext,
-                  stage, bn, cn, lang, pres, ev, case, plan, allsub, applied)
+                  stage, bn, cn, lang, pres, ev, case, plan, allsub, applied, sources=sources)
 
 
 
@@ -463,6 +497,49 @@ def tone_of(d): return TONE_MAP.get(d, "accept")
 
 
 def elapsed(): return round(time.time() - START_TS, 3)
+
+
+def now_iso():
+    """Local wall-clock timestamp with offset; naive ISO on exotic hosts."""
+    try: return datetime.now().astimezone().isoformat(timespec="milliseconds")
+    except Exception: return ""
+
+
+def log_event(events, phase, ok=True, **detail):
+    """Append one real phase record; consumed by evidence_assets.write_run_log()."""
+    try:
+        events.append({"ts": now_iso(), "elapsed": elapsed(), "phase": str(phase),
+                       "ok": bool(ok), "detail": detail})
+    except Exception:
+        pass
+
+
+def probe_degraded_paths():
+    """Runtime probe of empty input and malformed case.json using the real helpers."""
+    probe = {}
+    try:
+        with tempfile.TemporaryDirectory(prefix="rbw-probe-") as td:
+            t = Path(td)
+            try:
+                i = scan_input(t)
+                probe["empty_input"] = {
+                    "ok": not i.get("baseline") and not i.get("comments") and not i.get("errors"),
+                    "baseline_found": bool(i.get("baseline"))}
+            except Exception as exc:
+                probe["empty_input"] = {"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}
+            try:
+                (t / "case.json").write_text('{"case_id": "BROKEN", "output_contract": {',
+                                             encoding="utf-8")
+                obj, err = read_json(t / "case.json")
+                i = scan_input(t)
+                probe["bad_case_json"] = {
+                    "ok": obj is None and bool(err) and len(i.get("errors") or []) >= 1,
+                    "error_recorded": bool(err)}
+            except Exception as exc:
+                probe["bad_case_json"] = {"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}
+    except Exception as exc:
+        probe["probe_environment"] = {"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}
+    return probe
 
 if __name__ == "__main__":
     sys.exit(cli())
