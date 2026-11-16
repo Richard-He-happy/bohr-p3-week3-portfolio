@@ -1,0 +1,262 @@
+{
+  "csv": {
+    "scores": [
+      "run_type",
+      "ratee_id",
+      "task_id",
+      "direction",
+      "writing_type",
+      "tier",
+      "anchors",
+      "points_met",
+      "score",
+      "verdict",
+      "failure_type",
+      "blame",
+      "anchor_ids",
+      "evidence",
+      "improvement"
+    ],
+    "detail": [
+      "run_type",
+      "ratee_id",
+      "task_id",
+      "anchor_id",
+      "point_id",
+      "scope",
+      "level_rater_a",
+      "level_rater_b",
+      "delta",
+      "adjudicated",
+      "agree",
+      "verdict",
+      "failure_type",
+      "evidence_quote",
+      "evidence_locator",
+      "src_locator",
+      "rule"
+    ]
+  },
+  "tool": [
+    "tasks.jsonl",
+    "reference_answers/",
+    "anchors.md",
+    "scores.csv",
+    "scores_detail.csv",
+    "evaluation_report.md",
+    "reproducibility.md"
+  ],
+  "types": {
+    "abstract_summary": [
+      "tier1",
+      "Condense the paper into an abstract of no more than %d words",
+      [
+        "Objective",
+        "Methods",
+        "Results"
+      ],
+      180
+    ],
+    "methods_rewrite": [
+      "tier2",
+      "Rewrite the methods paragraph, holding every parameter, condition and unit verbatim",
+      [
+        "Methods"
+      ],
+      260
+    ],
+    "citation_format": [
+      "tier1",
+      "Normalise the reference list to the target style, keeping entries and DOIs verbatim",
+      [
+        "References"
+      ],
+      200
+    ],
+    "bilingual_abstract": [
+      "tier2",
+      "Produce a bilingual abstract with numbers, units and terms identical to the source",
+      [
+        "Abstract (EN)",
+        "摘要 (ZH)"
+      ],
+      320
+    ],
+    "review_response": [
+      "tier3",
+      "Answer every reviewer comment point by point, using material-internal evidence only",
+      [
+        "Response"
+      ],
+      400
+    ],
+    "structured_outline": [
+      "tier1",
+      "Produce a structured outline with all sections present and in the correct order",
+      [
+        "Outline"
+      ],
+      220
+    ]
+  },
+  "fix": {
+    "缺要点": "add a locator and a minimum length to the item, then split the point into two observable anchors",
+    "事实不符": "add a locator-bound number+unit anchor and trace the value back to its source",
+    "格式不符": "put word ceiling and sections in the first line of the item; give the anchor a hard threshold",
+    "引用错配": "give each citation its own anchor bound to the DOI entry locator",
+    "模型拒答": "reduce item count or scope; let the item accept a partial answer over visible parts",
+    "无": "leave as is; this item can serve as a reuse sample"
+  },
+  "msg": {
+    "fallback_out": "output directory not writable; fell back to ./output",
+    "no_material": "no parsable material: no items built; supply readable text/PDF/DOCX and rerun",
+    "stub": "# academic writing benchmark kit (incomplete)\n\nstatus `input_error`: no parsable material; gaps are listed in result.json.pending_human.\n",
+    "no_ratee": "the input did not provide a manuscript to score",
+    "scored": "scored objects: ",
+    "repair": "two raters more than one level apart: normalisation added and the anchor recomputed; no score was changed",
+    "repaired": "repaired and recomputed %d anchor(s)",
+    "exp_pos": "expected to reach 85 or higher everywhere",
+    "exp_neg": "expected clearly below the positive control",
+    "pend_ratee": "no manuscript supplied: delivered items, reference answers, anchors and calibration scores; manuscript scoring needs a rerun with the draft",
+    "pend_mat": "no parsable material, no items built; supply readable text/PDF/DOCX and rerun",
+    "same": "both scoring passes identical (deterministic and replayable)",
+    "diff": "the two scoring passes differ; recorded in errors",
+    "no_edit": "this skill never rewrites source material or manuscripts; it builds items and scores them",
+    "no": "none"
+  },
+  "report_detail_row": "- `{aid}` {verdict} (A/B/settled {a}/{b}/{adj}){ev}",
+  "deliverable": [
+    "# Academic writing benchmark kit (editable primary artefact)",
+    "",
+    "case `{cid}` · status `{status}`",
+    "",
+    "## Delivery inventory",
+    "",
+    "| File | Content |",
+    "|-|-|",
+    "| `tasks.jsonl` | {nt} items / {nwt} writing types / six directions {ndir} |",
+    "| `reference_answers/` | {nref} evidence-pack reference answers |",
+    "| `anchors.md` | {na} observable anchors (machine-readable block included) |",
+    "| `scores.csv` / `scores_detail.csv` | per-item totals / per-anchor two-rater detail |",
+    "| `evaluation_report.md` | per-item score, evidence, failure type and fix advice |",
+    "| `reproducibility.md` | input hashes, anchor version, commands, determinism verdict |",
+    "| `ratees/` | untouched snapshots of every scored object |",
+    "",
+    "## Replay",
+    "",
+    "```bash",
+    "python3 -B scripts/kernel.py --audit <out>",
+    "```"
+  ],
+  "refs_point": "- [{pid}] {text}\n  - locator `{loc}`\n  - verbatim evidence \"{quote}\"\n  - observable condition: {obs}",
+  "repro": [
+    "# Reproducibility record",
+    "",
+    "- package version `{v}` · anchor version `{av}` · Python {py}",
+    "- main command `python3 -B scripts/bench.py --input <case> --output <out>`",
+    "- replay command `python3 -B scripts/kernel.py --audit <out>` (recomputes scores from tasks.jsonl, anchors and ratees/*.txt)",
+    "",
+    "## Input sha256",
+    "",
+    "| File | sha256 | Characters |",
+    "|-|-|-|",
+    "{rows}",
+    "",
+    "## Determinism check",
+    "",
+    "- Verdict: {concl} (each text scored twice inside one process, compared anchor by anchor)",
+    "- No randomness, no wall-clock stamp, no network anywhere; compare anchor_version before comparing runs.",
+    "",
+    "## Budget",
+    "",
+    "- Model requests: 0 (deterministic computation) · wall clock {elapsed}s"
+  ],
+  "report": [
+    "# Evaluation report · {cid}",
+    "",
+    "- skill v{v} · anchor_version {av}",
+    "- material {docs}",
+    "- scored objects {ratee} · status `{status}`",
+    "",
+    "## 1 Item-type structure",
+    "",
+    "| Writing type | tier | Items | Directions covered |",
+    "|-|-|-|-|",
+    "{struct}",
+    "",
+    "Directions covered {covn}/6: {cov}",
+    "",
+    "## 2 Per-item result (same source as scores.csv, joined by the script)",
+    "",
+    "| task | writing type | anchors | met | score | verdict | failure type | blamed on |",
+    "|-|-|-|-|-|-|-|-|",
+    "{rows}",
+    "",
+    "## 3 Per-item evidence and fix advice",
+    "",
+    "{details}",
+    "## 4 Rater agreement",
+    "",
+    "- Cohen's kappa over per-anchor pass/missed (rater A normalised strict, rater B lenient token bag) = **{kappa}**",
+    "- Anchors more than one level apart: {big} ({biglist})",
+    "- Handling: normalisation added or criterion split and recomputed; no score was edited to force agreement",
+    "",
+    "## 5 Anchor discrimination calibration (not official case scores)",
+    "",
+    "| Control | Expectation | Mean score | Items meeting it |",
+    "|-|-|-|-|",
+    "{calib}",
+    "",
+    "## 6 Gaps and human confirmation",
+    "",
+    "{pend}",
+    "",
+    "> All numbers come from this run's scoring records (scores.csv / scores_detail.csv); controls only test anchor discrimination. No benchmark score, improvement factor or pre-written answer is submitted here."
+  ],
+  "anchors": [
+    "# Scoring anchors (anchor_version {av})",
+    "",
+    "Levels: **2** phenomenon fully present and verbatim / **1** partially present / **0** absent or altered; the rule column is machine-executable.",
+    "",
+    "| anchor_id | task | point | check rule | level 2 | level 1 | level 0 | locator |",
+    "|-|-|-|-|-|-|-|-|",
+    "{rows}",
+    "",
+    "## Revision log",
+    "",
+    "{revs}",
+    "",
+    "## Machine-readable anchors (`kernel.py --audit` replay entry)",
+    "",
+    "```json",
+    "{json}",
+    "```"
+  ],
+  "report_detail_task": "### {tid} · {wt} ({score}/100, {verdict})\n\n{rows}\n\nFix advice: {fix}",
+  "refs": [
+    "# {tid} · reference answer (evidence pack, not the single accepted essay)",
+    "",
+    "- direction `{dir}` · writing_type `{wt}` · {tier} · ceiling {wc} words · language {lang}",
+    "- source material: {refs}",
+    "",
+    "## 1 What must appear verbatim (everything else is free prose, facts stay fixed)",
+    "",
+    "{points}",
+    "",
+    "## 2 Assembly rules",
+    "- genre {wt}, mandatory sections {secs}",
+    "- move numbers, units and citations across unchanged: no rounding, no conversion, no completion",
+    "- connective sentences are free, but must not add citations, values or conclusions",
+    "",
+    "## 3 Legal variants (no penalty)",
+    "{variants}",
+    "",
+    "## 4 Unacceptable errors (land in level 0/1)",
+    "{fails}",
+    "",
+    "## 5 Pass rule",
+    "- {completion}",
+    "",
+    "> Built from verbatim evidence; this is a set of criteria, not the only acceptable answer, and not an official case result."
+  ]
+}
