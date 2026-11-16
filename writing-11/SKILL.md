@@ -111,8 +111,9 @@ prints `high`/`warn` counts plus the target coverage ratio.
 
 Re-runs the same validator, applies only accepted items, and produces the manuscript,
 the chapter exports, the patch, the rollback proof, the fault probes, the consistency
-report and ledger, the previews, the auxiliary JSON records, the self-check and finally
-`result.json`. A target the draft does not cover receives a deterministic fallback note
+report and ledger, the previews, the auxiliary JSON records, the self-check, the five
+review assets of section 9 and finally `result.json`. A target the draft does not cover
+receives a deterministic fallback note
 (anchor sentence plus the nearest related passage by word overlap) marked
 `generated_by: deterministic_fallback`, `needs_review: true`, and the run reports
 `partial`.
@@ -183,6 +184,14 @@ Supporting: `revised_manuscript.md`, `export_preview.pdf`, `manuscript_preview.h
 `consistency_report.md`, `consistency_tables.json`, `consistency_ledger.md`,
 `revision_records.json`, `operation_receipts.json`, `evidence_map.json`,
 `change_log.json`, `pending_human.json`, `self_check.json`, `result.json`.
+
+Review assets, written by `build` in the same directory and referenced from `result.json`:
+`golden_standard.json` (expected sections, word counts, citations, figures and pending
+items, each with a locator and a verbatim quote), `diff_report.md` (actual run vs the
+golden standard, item by item), `version_history.md` (static v0 to v1.0.0 chain plus the
+runtime rollback record), `run.log` (the real build log) and `self_check.json` (contract,
+main products, quote counts, fallbacks and exit code). They are projections of the
+verified run: no new source text, no new fact, and every entry stays locatable.
 
 The PDF is a real PDF 1.4 file with a text layer for ASCII content; CJK glyphs cannot
 be embedded without a font file, so they appear as `?` and the file says so in its own
