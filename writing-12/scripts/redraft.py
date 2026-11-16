@@ -87,6 +87,11 @@ def cmd_init(args):
     for field in index["output_contract"]:
         res.setdefault(field, [] if any(h in field.lower() for h in ("list", "map", "log", "facts")) else None)
     write_json(out / "result.json", res)
+    try:
+        import assets as _assets
+        _assets.generate(out, inp, wrk, out / "result.json", 0)
+    except Exception as _exc:
+        pass
     order = index["workorder"]
     lines = ["== 材料索引 =="] + ["%-4s %-24s %-5s %-17s %6d字/%3d段 [%s]" % (
         m["id"], m["name"][:24], m["kind"], m["method"], m["chars"], m["paragraphs"], m["role"])
@@ -226,6 +231,17 @@ def cmd_build(args):
         ctx["unc"].append("篇幅没有明确上限，按文体常规处理")
     (out / "deliverable.md").write_text(cp.render(ctx, note, report), encoding="utf-8")
     res = cp.finalize(out, index, note, report, ctx, extra_errors)
+    assets_info = {}
+    try:
+        import assets as _assets
+        assets_info = _assets.generate(out, inp, wrk, out / "result.json", 0) or {}
+    except Exception as _exc:
+        try:
+            _res = read_any(out / "result.json")
+            _res.setdefault("degradations", []).append("资产生成失败：%s: %s" % (type(_exc).__name__, _exc))
+            write_json(out / "result.json", _res)
+        except Exception:
+            pass
     print("== build ==\nstatus=%s fallback=%s 字数=%s 目标=%s 文件=%s" % (
         res["status"], fallback, words, target or "-", sorted(res["runtime"]["files"])))
     print("保真摘要：引文 %s/%s ｜ 数字漂移 %s ｜ 契约回填 %s/%s" % (
