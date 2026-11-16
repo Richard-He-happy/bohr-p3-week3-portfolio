@@ -33,7 +33,7 @@ figures that were never supplied (report the gap instead).
 | Item | Requirement |
 |-|-|
 | Reads | `/input/case.json`, `/input/task.md`, everything else under `/input/` (raster, PDF, CSV, JSON) |
-| Writes | `/app/output/result.json` (mandatory) plus `figure_structure.json`, `digitized_series.csv`, `tables.json`, `tables/<id>.csv` when the material allows |
+| Writes | `/app/output/result.json` (mandatory) plus `figure_structure.json`, `digitized_series.csv`, `tables.json`, `tables/<id>.csv` when the material allows, and the five verifiable assets of §11 |
 | Contract | every key of the input `output_contract` is present in `result.json`; unknown keys are kept; absent values use `null`/`[]` |
 | First write | a legal `partial` shell before analysis starts, replaced at the end without exception |
 | Exit code | always `0`; failures land in `errors` / `degradations` / `pending_human` |
@@ -165,7 +165,9 @@ run; use them as a gate. Additionally check:
   has an in-bounds bbox;
 - no pixel-derived number appears without `approx` and an error term;
 - `uncertainties` lists every withheld quantity; `pending_human` entries name an executable action;
-- an empty or corrupt input still yields a legal `result.json` and exit code 0.
+- an empty or corrupt input still yields a legal `result.json` and exit code 0;
+- the five assets of §11 are non-empty and `self_check.json` reports `pass: true` (or lists
+  probes as `skipped` when the sandbox forbids subprocesses).
 
 ## 9. Minimal synthetic example (illustration only — not an official case)
 
@@ -193,6 +195,7 @@ python3 scripts/figure_runner.py --input ./input --output ./out
 |-|-|
 | `SKILL.md` | this entry point |
 | `scripts/figure_runner.py` | orchestration: discovery, contract shell, per-figure pipeline, tables, audit, finalise |
+| `scripts/assets.py` | five verifiable assets: golden standard, diff report, version history, run log, self check |
 | `scripts/raster_ops.py` | pure pixel/text primitives: PNG decode, frame/tick/colour analysis, least-squares fit, trace, CSV/JSON table copy, PDF string extraction |
 | `references/field_contract.md` | field dictionary for `readings.json` and `result.json`, error conventions |
 | `references/figure_types.md` | per-figure-type reading guide and the anomaly decision matrix |
@@ -200,3 +203,23 @@ python3 scripts/figure_runner.py --input ./input --output ./out
 
 Version 1.0.0, Python ≥ 3.8, no external packages. When a field is added or renamed, update
 `references/field_contract.md` and section 6 here in the same change.
+
+## 11. Five verifiable assets (additive patch increment)
+
+Finalise also writes five machine-checkable assets to `/app/output/`. They are an additive
+layer only: delete `scripts/assets.py` and the runner silently falls back to the original
+behaviour (`A = None`), while the CLI, the contract keys and the always-0 exit code stay
+unchanged. Every asset is produced by the same real run — nothing is copied in from a test.
+
+| Asset | Contents | Verify with |
+|-|-|-|
+| `golden_standard.json` | expected delivery item by item (contract keys, figure structure, axes, series, readings, table values), each with a source `locator` and a verbatim `quote`; measured items are re-computable (PNG IHDR, tick pixels, colour clusters, file sha256) | `python3 -c "import json;print(json.load(open('/app/output/golden_standard.json'))['counts'])"` |
+| `diff_report.md` | actual product vs golden, one verdict per item (`match` / `missing` / `deviation` / `needs_review`), grouped summary, deviation list and re-run steps | `grep -c "^| G-" /app/output/diff_report.md` |
+| `version_history.md` | static v0 → v1.0.0 evolution, this assets increment, rollback table, plus a runtime section appended by finalise | `grep -n "本次运行" /app/output/version_history.md` |
+| `run.log` | real execution log: invocation, per-stage lines with timings, degradations, final `[exit] … exit_code=0` | `tail -n 5 /app/output/run.log` |
+| `self_check.json` | 20 machine assertions: contract keys, main products, counts, quote hits, asset presence, empty/bad-input fallback subprocesses, exit codes, package budget | `python3 -c "import json;d=json.load(open('/app/output/self_check.json'));print(d['pass'],d['passed'],d['total'])"` |
+
+`result.json` gains five summary keys (`golden_standard`, `diff_report`, `version_history`,
+`run_log`, `self_check`), each an object with `path`/`bytes`/`sha256`; no existing contract
+key is renamed or dropped. Re-running the same command regenerates all five assets; setting
+`FIGLENS_ASSET_PROBE=1` disables only the two fallback subprocess probes.
