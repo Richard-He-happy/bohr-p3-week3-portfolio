@@ -299,6 +299,9 @@ def execute(a, out, res, case):
                                          "layouts_used": sorted({c["layout_id"] for c in cms if c["layout_id"]})},
                             "sha256": sha(pptx.read_bytes()), "bytes": pptx.stat().st_size}
   res["content_map"] = {"slides": cms}
+  # JSON-safe plan copy for the page-asset stage; page_assets pops it before result.json is final
+  res["_page_plan"] = [{k: pr.get(k) for k in ("n", "role", "title", "claim", "bullets", "evidence", "notes", "deviation")}
+                       for pr in pages]
   pdf = out / "presentation.pdf"
   pngs = sorted((out / "preview").glob("*.png")) if (out / "preview").exists() else []
   res["export_artifact"] = {
@@ -438,6 +441,12 @@ def main(argv=None):
       res.setdefault("errors", []).append({"stage": "version_history", "detail": traceback.format_exc()[-500:]})
     try:
       finalize(out, res, case)
+      try:
+        # page-level assets: minimal hook, isolated so a failure never touches the main products
+        PA = _load("_sl04pa", "page_assets.py")
+        PA.generate(out, Path(a.input), res, engine=ENGINE, logf=log)
+      except Exception:
+        res.setdefault("errors", []).append({"stage": "page_assets", "detail": traceback.format_exc()[-600:]})
       res["run_log"] = {"path": str(RUNLOG.path), "lines": len(RUNLOG.lines), "stages": RUNLOG.summary()["stages"]}
       wj(out / "result.json", res)
       log("main.done", "status=%s seconds=%.2f" % (res.get("status"), time.time() - START_TS))
