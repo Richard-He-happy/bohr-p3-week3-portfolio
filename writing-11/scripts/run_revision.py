@@ -27,8 +27,18 @@ EA_BLOCK = re.compile(r"(?m)^> \*\*\[EA-.*(?:\n>.*)*\n?")
 START = time.time()
 
 
+LOGFILE = None
+
+
 def log(*args):
     print(*args, flush=True)
+    if LOGFILE:
+        try:
+            with open(LOGFILE, "a", encoding="utf-8") as handle:
+                handle.write("[%s] %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                           " ".join(str(a) for a in args)))
+        except Exception:
+            pass
 
 
 def digest(text):
@@ -37,6 +47,7 @@ def digest(text):
 
 def resolve_paths(args):
     """Resolve --input/--out/--work, then the environment variables, then the defaults."""
+    global LOGFILE
     root = Path(args.input or os.environ.get("INPUT_DIR") or "/input")
     if not root.is_dir():
         for alternative in (Path.cwd() / "input", Path(__file__).resolve().parent.parent / "input",
@@ -50,6 +61,7 @@ def resolve_paths(args):
     work = Path(args.work or os.environ.get("WORK_DIR") or (out.parent / "work"))
     for folder in (out, work, out / "versions"):
         folder.mkdir(parents=True, exist_ok=True)
+    LOGFILE = str(work / "run.log")
     return {"input": root, "out": out, "work": work}
 
 
@@ -377,6 +389,16 @@ def cmd_build(args, dirs):
         % (len(findings), severity["high"], severity["warn"], len(ledger.get("conflicts") or []),
            sum(1 for f in facts if f["preserved"]), len(facts), control["rollback_equals_v1"],
            sum(1 for f in faults if f["state_unchanged"]), len(faults), "pass" if not failed else "FAILED"))
+    try:
+        import assets
+        asset_summary = assets.generate(out, work, index, payload, manuscript, log=log)
+        if not asset_summary.get("ok"):
+            payload["degradations"] = list(payload.get("degradations") or []) + [
+                "one or more review assets missing or empty"]
+    except Exception as exc:
+        log("review assets degraded: %r" % (exc,))
+        payload["degradations"] = list(payload.get("degradations") or []) + [
+            "review assets unavailable: %r" % (exc,)]
 
 
 COMMANDS = {"init": cmd_init, "show": cmd_show, "check": cmd_check, "build": cmd_build}
