@@ -1,7 +1,9 @@
 
 import argparse
 import json
+import platform
 import re
+import shutil
 import sys
 import time
 import traceback
@@ -32,6 +34,16 @@ LINEAGE = [
          why='the rubric asks for page-level gold, a re-checkable diff, a render check, a template check '
              'and an honest self-check of the delivery',
          rollback='`--no-golden` (core fields only) or `--legacy-sections` (one section label per page)'),
+    dict(version='1.1.0', date='2026-11-16',
+         change='page-level verifiable assets: per-page golden evidence (locator + verbatim quote), '
+                'page-count consistency block in page_diff.md, format_compliance.json (font sizes, footer, '
+                'page count, canvas ratio), pptx/PNG inspection and failure reasons in export_check.json, '
+                'self_check.json (renamed from selfcheck.json; contract, main artefact, page-count, quote, '
+                'fallback and exit-code checks), run_log summary field',
+         why='the page-level gold, diff, export and self-check files are what lets a reviewer re-check '
+             'every page without rerunning the build',
+         rollback='restore the pre-patch `scripts/` tree (v1.0.0) from `slides-02_orig`; every new '
+                  'artefact is additive and `--no-golden` still skips the inspection files'),
 ]
 def emit(message):
     LOG.append('[%7.2fs] %s' % (time.time() - START, message))
@@ -46,7 +58,8 @@ def blank_result(case):
             'exceptions': [], 'errors': [], 'degradations': [], 'pending_human': [],
             'uncertainty': [], 'sources': [], 'changes': [], 'page_golden': None,
             'page_diff': None, 'version_history': None, 'export_check': None,
-            'template_check': None, 'selfcheck': None}
+            'template_check': None, 'format_compliance': None, 'run_log': None,
+            'self_check': None, 'selfcheck': None}
 def bootstrap(args):
     indir = sk.prepare_indir(args.input)
     out = sk.prepare_outdir(args.output, emit)
@@ -64,9 +77,8 @@ def bootstrap(args):
     emit('partial result.json written (%d contract key(s))' % len(ctx['keys']))
     emit('argv=%s' % ' '.join(sys.argv[1:]))
     emit('tools: soffice=%s pdftotext=%s pdffonts=%s' % (
-        bool(__import__('shutil').which('soffice') or __import__('shutil').which('libreoffice')),
-        bool(__import__('shutil').which('pdftotext')),
-        bool(__import__('shutil').which('pdffonts'))))
+        bool(shutil.which('soffice') or shutil.which('libreoffice')),
+        bool(shutil.which('pdftotext')), bool(shutil.which('pdffonts'))))
     checkpoint('discover', 'case.json field(s)=%d, output_contract=%d'
                % (len(case), len(ctx['keys'])), 'v0', 'result.json')
     if not case:
@@ -206,16 +218,23 @@ def plan(ctx):
 def register(ctx):
     res = ctx['result']
     inventory = gc.inventory(ctx['pool'])
+    source_text = sk.tidy('\n'.join(ctx.get('source_pages') or []))
     golden = None if ctx['args'].no_golden else gc.build_golden(
-        ctx['pages'], inventory, ctx['meta'], ctx['requested'])
+        ctx['pages'], inventory, ctx['meta'], ctx['requested'], source_text)
     if golden:
         sk.dump_json(ctx['out'] / 'page_golden.json', golden)
-        checkpoint('golden', 'golden standard: %d page(s), %d section label(s), %d numeric token(s), '
-                   '%d figure/table ref(s)' % (len(golden['pages']), len(inventory['sections']),
-                                              len(inventory['numbers']),
-                                              len(inventory['figures']) + len(inventory['tables'])),
-                   'v2', 'page_golden.json')
-    ctx.update(dict(inventory=inventory, golden=golden))
+        totals = golden.get('evidence_totals') or {}
+        checkpoint('golden', 'golden standard: %d page(s), %d key point(s), %d evidence item(s) with '
+                   'locator + verbatim quote (%d verified), %d section label(s), %d figure/table ref(s)'
+                   % (len(golden['pages']),
+                      sum(len(row.get('key_points') or []) for row in golden['pages']),
+                      totals.get('items', 0), totals.get('verified', 0),
+                      len(inventory['sections']),
+                      len(inventory['figures']) + len(inventory['tables'])),
+                   'v2', 'page_golden.json',
+                   'frozen before any slide XML: per-page title, role, key points and verbatim quotes '
+                   'with locators are the standard the delivered deck is measured against')
+    ctx.update(dict(inventory=inventory, golden=golden, source_text=source_text))
     return ctx
 def build(ctx):
     res, out, pages, design = ctx['result'], ctx['out'], ctx['pages'], ctx['design']
@@ -305,23 +324,40 @@ def audit(ctx):
 def inspect(ctx):
     res, out = ctx['result'], ctx['out']
     if not ctx['args'].no_golden:
-        export_check = vf.export_check(ctx['pdf'] if ctx['pdf'].exists() else None,
-                                       len(ctx['pages']), ctx['fits'], ctx['figures'], ctx['design'])
+        export_check = vf.export_check(
+            ctx['pdf'] if ctx['pdf'].exists() else None, len(ctx['pages']), ctx['fits'],
+            ctx['figures'], ctx['design'], pptx=ctx['pptx'], out_dir=out,
+            export_method=ctx['export_result']['method'],
+            export_degraded=ctx['export_result']['degraded'])
         sk.dump_json(out / 'export_check.json', export_check)
         res['export_check'] = dict(
             path=str(out / 'export_check.json'), overall_pass=export_check['overall_pass'],
             verdict=export_check.get('verdict'),
             pdf_pages=(export_check.get('page_count') or {}).get('pdf_pages'),
             slides=len(ctx['pages']),
+            pptx_slide_parts=(export_check.get('pptx') or {}).get('slide_parts'),
+            pptx_notes_parts=(export_check.get('pptx') or {}).get('notes_parts'),
+            pdf_method={'method': export_check.get('method'),
+                        'degraded': export_check.get('degraded')},
+            png_count=(export_check.get('png') or {}).get('count'),
             fonts=(export_check.get('fonts') or {}).get('base_fonts'),
             font_substituted=(export_check.get('fonts') or {}).get('substituted'),
             overflow_violations=len((export_check.get('text_overflow') or {}).get('violations') or []),
+            failures=export_check.get('failures') or [],
+            status_summary=export_check.get('status_summary') or {},
             checks=[dict(id=check['id'], status=check['status'])
                     for check in export_check['checks']])
-        checkpoint('export_check', '%s (%d/%d item pass)'
+        checkpoint('export_check', '%s (%d pass / %d warn / %d fail / %d n/a); pptx %s slide part(s), '
+                   'PDF %s page(s)'
                    % (export_check.get('verdict'),
-                      sum(1 for check in export_check['checks'] if check['status'] == 'pass'),
-                      len(export_check['checks'])), 'v2', 'export_check.json')
+                      (export_check.get('status_summary') or {}).get('pass', 0),
+                      (export_check.get('status_summary') or {}).get('warn', 0),
+                      (export_check.get('status_summary') or {}).get('fail', 0),
+                      (export_check.get('status_summary') or {}).get('n/a', 0),
+                      (export_check.get('pptx') or {}).get('slide_parts'),
+                      (export_check.get('page_count') or {}).get('pdf_pages')),
+                   'v2', 'export_check.json',
+                   'pptx unzipped; a missing pdffonts/pdftotext is unknown, never a pass')
         template_check = vf.template_check(ctx['pptx'], ctx['design'], ctx['template_path'],
                                            ctx['meta'], len(ctx['pages']))
         sk.dump_json(out / 'template_check.json', template_check)
@@ -331,13 +367,22 @@ def inspect(ctx):
             passes=template_check.get('passes', 0), fails=template_check.get('fails', 0),
             warns=template_check.get('warns', 0), na=template_check.get('na', 0),
             failures=template_check['failures'],
+            layout_map=template_check.get('layout_map') or [],
+            deviations=template_check.get('deviations') or [],
             checks=[dict(id=check['id'], status=check['status'])
                     for check in template_check['checks']])
-        checkpoint('template_check', '%d pass / %d fail / %d warn / %d n/a'
+        checkpoint('template_check', '%d pass / %d fail / %d warn / %d n/a; layout map on %d page(s)'
                    % (template_check.get('passes', 0), template_check.get('fails', 0),
-                      template_check.get('warns', 0), template_check.get('na', 0)),
+                      template_check.get('warns', 0), template_check.get('na', 0),
+                      len(template_check.get('layout_map') or [])),
                    'v2', 'template_check.json')
-        diff = gc.diff_golden(ctx['golden'], ctx['content_map'], ctx['fits'], res['compliance_checks'])
+        counts = dict(golden=len(ctx['golden']['pages']), plan=len(ctx['plan']['pages']),
+                      pptx_slides=(export_check.get('pptx') or {}).get('slide_parts'),
+                      pptx_notes=(export_check.get('pptx') or {}).get('notes_parts'),
+                      content_map=len(ctx['content_map']), pdf_pages=ctx['pdf_pages'],
+                      requested=ctx['requested'])
+        diff = gc.diff_golden(ctx['golden'], ctx['content_map'], ctx['fits'],
+                              res['compliance_checks'], counts)
         (out / 'page_diff.md').write_text(gc.render_diff_md(diff, ctx['golden']), encoding='utf-8')
         summary = diff['summary']
         res['page_diff'] = dict(
@@ -346,18 +391,44 @@ def inspect(ctx):
             pages_partial=summary['partial'], pages_fail=summary['failed'],
             hard_gaps=summary['hard_gaps'], soft_gaps=summary['soft_gaps'],
             headline_coverage=summary['headline'],
+            page_count_consistent=(diff.get('page_count') or {}).get('consistent'),
+            page_count=(diff.get('page_count') or {}),
             per_page=[dict(page=row['page'], role=row['role'], verdict=row['verdict'],
                            hard_fail=row['hard_fail'], soft_fail=row['soft_fail'])
                       for row in diff['pages']], gaps=diff['gaps'])
         res['page_golden'] = dict(path=str(out / 'page_golden.json'),
                                   rules_version=ctx['golden']['rules_version'],
-                                  source=ctx['golden']['source'], deck=ctx['golden']['deck'],
-                                  pages=ctx['golden']['pages'])
-        checkpoint('diff', '%d pass / %d partial / %d fail; headline numbers %d/%d'
+                                  source=ctx['golden']['source'],
+                                  evidence_totals=ctx['golden'].get('evidence_totals'),
+                                  deck=ctx['golden']['deck'], pages=ctx['golden']['pages'])
+        checkpoint('diff', '%d pass / %d partial / %d fail; headline numbers %d/%d; page counts %s'
                    % (summary['passed'], summary['partial'], summary['failed'],
-                      summary['headline']['covered'], summary['headline']['required']),
-                   'v2', 'page_diff.md',
-                   'the diff reads page_golden.json plus content_map, so it can and does fail')
+                      summary['headline']['covered'], summary['headline']['required'],
+                      'consistent' if (diff.get('page_count') or {}).get('consistent') else 'MISMATCH'),
+                   'v2', 'page_diff.md', 'reads page_golden.json + content_map; counts can fail')
+    format_check = vf.format_compliance(
+        ctx['pptx'], out, ctx['pdf_pages'], ctx['pages'], ctx['meta'], ctx['content_map'],
+        ctx['golden'], ctx['requested'], ctx['design'], ctx['export_result']['method'])
+    sk.dump_json(out / 'format_compliance.json', format_check)
+    res['format_compliance'] = dict(
+        path=str(out / 'format_compliance.json'), overall_pass=format_check['overall_pass'],
+        verdict=format_check.get('verdict'), failures=format_check.get('failures') or [],
+        canvas=format_check.get('canvas'), page_count=format_check.get('page_count'),
+        font_status=(format_check.get('font_sizes') or {}).get('status'),
+        font_sizes=(format_check.get('font_sizes') or {}).get('body_ladder_pt'),
+        font_family_status=(format_check.get('font_family') or {}).get('status'),
+        footer_status=(format_check.get('footer') or {}).get('status'),
+        checks=[dict(id=check['id'], status=check['status'])
+                for check in format_check['checks']])
+    checkpoint('format_compliance', '%s (%d pass / %d fail / %d n/a); canvas %s, body %s pt, footer %s'
+               % (format_check.get('verdict'),
+                  sum(1 for check in format_check['checks'] if check['status'] == 'pass'),
+                  len(format_check.get('failures') or []),
+                  sum(1 for check in format_check['checks'] if check['status'] == 'n/a'),
+                  ((format_check.get('canvas') or {}).get('ratio')),
+                  (format_check.get('font_sizes') or {}).get('body_ladder_pt'),
+                  (format_check.get('footer') or {}).get('status')),
+               'v2', 'format_compliance.json', 'font sizes, footer, page count, canvas ratio')
     ctx['diff'] = res.get('page_diff')
     return ctx
 def finalize(ctx):
@@ -368,18 +439,9 @@ def finalize(ctx):
              pdf_pages=ctx['pdf_pages']),
         dict(version='v2', time=sk.stamp(), slides=len(pages),
              page_diff=(res['page_diff'] or {}).get('overall'),
+             format_compliance=(res['format_compliance'] or {}).get('overall_pass'),
              export_check=(res['export_check'] or {}).get('verdict'),
              template_check=(res['template_check'] or {}).get('overall_pass'))]
-    (out / 'version_history.md').write_text(
-        gc.version_history(STEPS, ctx['case'].get('case_id'), LINEAGE), encoding='utf-8')
-    res['version_history'] = dict(path=str(out / 'version_history.md'), package_version=gc.PKG_VERSION,
-                                  rollback=['--reuse-plan <out>/plan_v0.json', '--no-golden',
-                                            '--legacy-sections'],
-                                  records=[dict(step=item['step'], version=item['version'],
-                                                detail=sk.shorten(item['detail'], 140))
-                                           for item in STEPS])
-    checkpoint('version_history', '%d run record(s) + package lineage 0.1.0 -> %s'
-               % (len(STEPS), gc.PKG_VERSION), 'v2', 'version_history.md')
     res['uncertainty'] = ['figures cited from embedded originals; none redrawn',
                           'bullet text is verbatim; notes are speaking prompts']
     if ctx['requested'] and ctx['requested'] != len(pages):
@@ -389,12 +451,14 @@ def finalize(ctx):
         res['uncertainty'].append(
             '%d page-level soft gap(s) between the deck and its golden standard: %s (see page_diff.md)'
             % (res['page_diff']['soft_gaps'],
-               ', '.join('p%d.%s' % (gap['page'], gap['check']) for gap in res['page_diff']['gaps'][:6])))
+               ', '.join('p%d.%s' % (gap['page'], gap['check'])
+                         for gap in res['page_diff']['gaps'][:6])))
     ok_status = (ctx['audit_record']['bullets']
                  and ctx['audit_record']['verified'] == ctx['audit_record']['bullets']
                  and not ctx['export_result']['degraded']
                  and res['compliance_checks']['overall_pass']
-                 and (res['page_diff'] or {}).get('overall') != 'FAIL')
+                 and (res['page_diff'] or {}).get('overall') != 'FAIL'
+                 and (res['format_compliance'] or {}).get('overall_pass', True))
     if not ctx['pool'] or any(page['role'] == 'notice' for page in pages):
         res['status'] = 'insufficient_evidence'
     elif ok_status:
@@ -406,13 +470,56 @@ def finalize(ctx):
                       'slides_requested': ctx['requested'], 'slides_delivered': len(pages),
                       'plan_sha256': ctx['plan']['sha256'][:16],
                       'package_version': gc.PKG_VERSION}
+    (out / 'run.log').write_text('\n'.join(LOG) + '\n', encoding='utf-8')
+    stage_of = {'page_golden.json': 'register', 'presentation.pptx': 'build',
+                'presentation.pdf': 'build', 'plan_v0.json': 'plan',
+                'export_check.json': 'inspect', 'template_check.json': 'inspect',
+                'format_compliance.json': 'inspect', 'page_diff.md': 'inspect'}
+    assets = []
+    for name in vf.ASSET_FILES:
+        path = out / name
+        assets.append(dict(name=name, bytes=(path.stat().st_size if path.exists() else 0),
+                           stage=stage_of.get(name, 'finalize')))
+    checkpoint('assets', 'artefact manifest: ' + ', '.join(
+        '%s=%sB' % (item['name'], item['bytes'] or 'finalize') for item in assets),
+        'v2', 'version_history.md', 'eight page-level files, each mirrored into result.json')
+    context = dict(run_id=time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()),
+                   command='python3 ' + ' '.join(sys.argv),
+                   python='%s %s' % (platform.python_implementation(), platform.python_version()),
+                   platform=platform.platform(), cwd=str(Path.cwd()),
+                   started=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(START)),
+                   elapsed=round(time.time() - START, 2), exit_code=0, status=res['status'],
+                   tools='soffice=%s pdftotext=%s pdffonts=%s' % (
+                       bool(shutil.which('soffice') or shutil.which('libreoffice')),
+                       bool(shutil.which('pdftotext')), bool(shutil.which('pdffonts'))),
+                   assets=assets)
+    (out / 'version_history.md').write_text(
+        gc.version_history(STEPS, ctx['case'].get('case_id'), LINEAGE, context), encoding='utf-8')
+    res['version_history'] = dict(path=str(out / 'version_history.md'), package_version=gc.PKG_VERSION,
+                                  rollback=['--reuse-plan <out>/plan_v0.json', '--no-golden',
+                                            '--legacy-sections'],
+                                  lineage=[dict(version=item['version'], date=item['date'])
+                                           for item in LINEAGE],
+                                  records=[dict(step=item['step'], version=item['version'],
+                                                detail=sk.shorten(item['detail'], 140))
+                                           for item in STEPS])
+    checkpoint('version_history', '%d run record(s) + package lineage 0.1.0 -> %s; static lineage '
+               'plus a runtime run section' % (len(STEPS), gc.PKG_VERSION), 'v2', 'version_history.md')
+    res['run_log'] = dict(path=str(out / 'run.log'), stages=len(STEPS), exit_code=0,
+                          bytes=(out / 'run.log').stat().st_size,
+                          elapsed_s=round(time.time() - START, 2))
+    res['self_check'] = vf.run_self_check(out, res, ctx['keys'], not ctx['args'].no_golden)
+    res['selfcheck'] = res['self_check']
+    checkpoint('selfcheck', 'overall_pass=%s, %d/%d passed, %d skipped, failures=%s'
+               % (res['self_check']['overall_pass'], res['self_check']['passed'],
+                  res['self_check']['total'], res['self_check']['skipped'],
+                  ','.join(res['self_check']['failures']) or 'none'), 'v2', 'self_check.json')
     unresolved = sk.echo_contract(res, ctx['keys'])
     if isinstance(res.get('compliance_checks'), dict):
         res['compliance_checks']['contract'] = {
             'required_keys': len(ctx['keys']), 'filled': len(ctx['keys']) - len(unresolved),
             'unknown_keys': unresolved}
-    res['selfcheck'] = vf.run_selfcheck(out, res, ctx['keys'])
-    sk.dump_json(out / 'result.json', res)
+    fmt_failures = (res['format_compliance'] or {}).get('failures') or []
     for item in res['exceptions']:
         emit('EXCEPTION %s @%s: %s' % (item.get('code'), item.get('stage'),
                                        sk.shorten(item.get('detail'), 120)))
@@ -420,14 +527,30 @@ def finalize(ctx):
         emit('DEGRADED @%s: %s' % (item.get('stage'), sk.shorten(item.get('detail'), 120)))
     for item in res['pending_human']:
         emit('PENDING_HUMAN: %s' % sk.shorten(item, 120))
-    checkpoint('selfcheck', 'overall_pass=%s, failures=%s'
-               % (res['selfcheck']['overall_pass'], ','.join(res['selfcheck']['failures']) or 'none'),
-               'v1', 'selfcheck.json')
-    checkpoint('finalize', 'status=%s, %d contract key(s), %d unknown'
-               % (res['status'], len(ctx['keys']), len(unresolved)), 'v2', 'result.json')
-    emit('finalized %s: %d/%d bullets verified, %d slide(s)'
-         % (res['status'], ctx['audit_record']['verified'], ctx['audit_record']['bullets'], len(pages)))
+    for item in fmt_failures:
+        emit('FORMAT_FAIL %s: %s' % (item.get('check'), sk.shorten(item.get('reason'), 120)))
+    sk.dump_json(out / 'result.json', res)
+    emit('finalized %s: %d/%d bullets verified, %d slide(s), %d contract key(s)'
+         % (res['status'], ctx['audit_record']['verified'], ctx['audit_record']['bullets'],
+            len(pages), len(ctx['keys'])))
+    checkpoint('finalize', 'status=%s, %d contract key(s), %d unknown; self_check %s'
+               % (res['status'], len(ctx['keys']), len(unresolved),
+                  res['self_check']['overall_pass']), 'v2', 'result.json')
+    emit('run finished: status=%s, %d stage(s), exit code 0, elapsed %.2fs'
+         % (res['status'], len(STEPS), time.time() - START))
     (out / 'run.log').write_text('\n'.join(LOG) + '\n', encoding='utf-8')
+    for item in assets:
+        if item['name'] in ('version_history.md', 'self_check.json'):
+            item['bytes'] = (out / item['name']).stat().st_size if (out / item['name']).exists() else 0
+    context['elapsed'] = round(time.time() - START, 2)
+    (out / 'version_history.md').write_text(
+        gc.version_history(STEPS, ctx['case'].get('case_id'), LINEAGE, context), encoding='utf-8')
+    res['version_history']['records'] = [dict(step=item['step'], version=item['version'],
+                                              detail=sk.shorten(item['detail'], 140))
+                                         for item in STEPS]
+    res['run_log'].update(stages=len(STEPS), bytes=(out / 'run.log').stat().st_size,
+                          elapsed_s=round(time.time() - START, 2))
+    sk.dump_json(out / 'result.json', res)
     return ctx
 def run(args):
     ctx = bootstrap(args)
