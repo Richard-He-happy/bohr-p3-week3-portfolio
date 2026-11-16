@@ -103,6 +103,7 @@ def pane36(pars28):
         scop82, trac80 = ((scan90.get('selection_text') or '').strip(), (scan90.get('target_section') or '').strip())
         toke88 = colu35(grad30, scop82) if scop82 else None
         scre66 = chai67(pars28, toke88[0]) if toke88 else cell75(pars28, prob71, trac80) if prob71 else None
+        labe73 = grad30[toke88[0]:toke88[1]] if toke88 else None
         if scop82 and toke88:
             labe73 = grad30[toke88[0]:toke88[1]]
             page44.append(fiel54(merg92 + '-A0', 'answer_point', merg92, '答案依据覆盖任务选中文本(原文逐字存在)', {'selection': labe73}, sele50(pars28, scre66, labe73), labe73, 'answer_contains'))
@@ -116,13 +117,15 @@ def pane36(pars28):
                 page44.append(fiel54(merg92 + '-N1', 'number_consistency', merg92, '答案数字可在原文支撑句中逐字找到', {'numbers': ledg57}, sele50(pars28, scre66, node84), node84, 'answer_numbers', {'numbers': ledg57}))
         else:
             page44.append(fiel54(merg92 + '-A1', 'answer_point', merg92, '答案由材料段落支撑', {}, None, None, 'unsupported', status='pending', note='材料中未找到与问题相关的段落'))
-        page44.append(fiel54(merg92 + '-L1', 'evidence_anchor', merg92, '锚点真实: 切片与 quote 逐字一致', {'slice_equals_quote': True}, None, None, 'anchor_slice', {'task_id': merg92}))
+        page44.append(fiel54(merg92 + '-L1', 'evidence_anchor', merg92, '锚点真实: 切片与 quote 逐字一致', {'slice_equals_quote': True}, sele50(pars28, scre66, labe73) if labe73 else None, labe73, 'anchor_slice', {'task_id': merg92}))
         if scop82:
             page44.append(fiel54(merg92 + '-L2', 'evidence_anchor', merg92, '给出逐字选中文本时精度须 char_exact', {'anchor_precision': 'char_exact'}, sele50(pars28, scre66, grad30[toke88[0]:toke88[1]]) if toke88 else None, None, 'anchor_precision', {'task_id': merg92}))
-        page44.append(fiel54(merg92 + '-R1', 'annotation_record', merg92, '批注与原文位置绑定且字段齐全(%d 项)' % len(pin04), {'fields': pin04}, None, None, 'annotation_fields', {'task_id': merg92}))
+        page44.append(fiel54(merg92 + '-R1', 'annotation_record', merg92, '批注与原文位置绑定且字段齐全(%d 项)' % len(pin04), {'fields': pin04}, sele50(pars28, scre66, labe73) if labe73 else None, labe73, 'annotation_fields', {'task_id': merg92}))
         page44.append(fiel54(merg92 + '-R2', 'qa_record', merg92, '问答记录可复用: 问题原文一致/答案非空/锚点含页与区间', {'question': prob71}, None, None, 'qa_record', {'task_id': merg92, 'question': prob71}))
     page44 += [fiel54('G-1', 'closed_loop', '*', '七步闭环各有记录且状态可判定', {'steps': curs11}, None, None, 'loop_steps'), fiel54('G-2', 'export', '*', '导出件齐全且非空', {'files': deri03}, None, None, 'export_files'), fiel54('G-3', 'export', '*', 'reading_record.md 覆盖全部批注', {'>=annotations': len(pars28['anns'])}, None, None, 'record_coverage'), fiel54('G-4', 'citation_consistency', '*', 'claim 的 source_id 已声明, quote 命中', {'source_ids': [pool79.get('source_id') for pool79 in pars28['srcs']]}, None, None, 'citation_sources'), fiel54('G-5', 'number_consistency', '*', '答案类 claim 数字在原文中', {'numbers_subset_of': 'doc'}, None, None, 'global_numbers'), fiel54('G-6', 'evidence_anchor', '*', 'doc_text_sha256 与段落文本一致', {'doc_text_sha256': pars28['docsha']}, None, None, 'doc_hash'), fiel54('G-7', 'status', '*', 'status 合法; ok/answered 时无 unresolved', {'allowed': list(zone08)}, None, None, 'status_consistency')]
-    return {'schema': 'margin-reader/golden@1', 'case_id': pars28['case_id'], 'source_id': (pars28['srcs'] or [{}])[0].get('source_id') or pars28['docs'].get('source_id'), 'doc_text_sha256': pars28['docsha'], 'generated_at': now(), 'definition': '期望交付内容清单, 由任务要求+材料机械推导, 无预置答案', 'derivation_rule': '选区逐字命中→所在段落, 否则按问题关键词在目标章节取段; 支撑句=段内最优句; 期望数字=该句数字集; 期望锚点=字符区间', 'acceptance': '判定见 references/result-and-anchor-contract.md §8; quote 须在段落文本逐字命中', 'items': page44}
+    for stre69 in (pars28['c'].get('contract') or {}):
+        page44.append(fiel54('OC-%s' % stre69, 'output_contract', '*', 'output_contract 键 %s 在 result.json 顶层存在(值可为 null/[] 但键不能少)' % stre69, {'key': stre69, 'present': True}, {'source_id': 'case.json', 'path': 'case.json', 'json_pointer': '/output_contract/%s' % stre69}, None, 'contract_key', {'key': stre69}))
+    return {'schema': 'margin-reader/golden@1', 'case_id': pars28['case_id'], 'source_id': (pars28['srcs'] or [{}])[0].get('source_id') or pars28['docs'].get('source_id'), 'doc_text_sha256': pars28['docsha'], 'generated_at': now(), 'definition': '期望交付内容清单, 由 output_contract + 任务要求 + 材料机械推导, 无预置答案', 'derivation_rule': '契约键逐键登记; 选区逐字命中→所在段落, 否则按问题关键词在目标章节取段; 支撑句=段内最优句; 期望数字=该句数字集; 期望锚点=字符区间', 'acceptance': '判定见 references/result-and-anchor-contract.md §8; quote 须在段落文本逐字命中', 'items': page44}
 
 def rank47(lane65, tail29=None):
     try:
@@ -246,6 +249,11 @@ def wind32(pars28, clos43):
         if issu89 == 'answered' and (not pars28['sels']):
             return ('deviation', 'answered 但无答案', '状态与产物不符')
         return ('pass', str(issu89), '')
+    if marg25 == 'contract_key':
+        stre69 = slic18.get('key')
+        if stre69 in (pars28.get('res') or {}):
+            return ('pass', '键存在', '')
+        return ('missing', '缺键 %s' % stre69, 'output_contract 键未回填 result.json')
     return ('pending', '未实现判定', '需补实现')
 
 def wrap16(pars28, merg92):
