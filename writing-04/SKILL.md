@@ -1,6 +1,6 @@
-﻿---
+---
 name: manuscript-revision-desk
-version: 1.0.0
+version: 1.1.0
 description: Offline revision desk for existing academic manuscripts. Given /input/case.json, task.md and supplied material, it locates the targets named by the organizer workorder, inserts source-grounded editorial annotations one by one, verifies anchors and evidence deterministically, then exports an editable manuscript, per-item accept/reject receipts, rollback evidence and a set of auditable artifacts. Standard library only; no network; no fake remote-client or Word tracked-change claims.
 ---
 
@@ -115,7 +115,7 @@ python3 $R build                   # inject, publish, receipts, audit assets, fi
 必备字段分两组：
 
 - 运行与状态：`runtime`、`case_id`、`status`（`ok` / `partial` / `insufficient_evidence` / `input_error`）、`sources`（每份材料 sha256）、`errors`、`degradations`、`uncertainty`、`pending_human`、`changes`。
-- 佐证与审计：`preservation`、`format_integrity`、`rollback`、`receipts.coverage`；外加 `self_check`、`diff_report`、`golden_standard`、`version_history`（各带 `file` 与计数；`init` 阶段留空或 `status=draft`）与 `exceptions`。
+- 佐证与审计：`preservation`、`format_integrity`、`rollback`、`receipts.coverage`；外加 `self_check`、`diff_report`、`golden_standard`、`version_history`、`run_log`（各带 `file` 与计数；`init` 阶段留空或 `status=draft`）、`verifiable_assets`（5 资产字节+sha256 实测）与 `evidence_coverage`（金标准/契约/引文/事实计数）与 `exceptions`。
 
 `status=ok` 的门槛是硬的：零 errors、零 fallback、零 reject、零未验证 fact、targets 非空、至少一条改动落地。任一不满足就按实情降级，不许把 partial 说成 ok。
 
