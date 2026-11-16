@@ -74,6 +74,20 @@ python3 -B /skills/literature-qa/scripts/run_reader.py --input /input --out /app
 
 `/app` 可写时额外写一份 `/app/answers.json` 兼容件；写不了只记降级，不影响主结果。
 
+## 4.1 五件可核验资产（本次补丁新增）
+
+`run_reader.py` 收尾时调用 `scripts/assets.py`（纯标准库、离线、不依赖 CWD、try/except 包裹），在同一输出目录写 5 件可逐条回查的资产；原主产物、契约字段、CLI 与退出码不变：
+
+| 资产 | 内容 |
+|-|-|
+| `golden_standard.json` | 按工作单问题逐项：字段（题型）、期望值/条件、证据（`paragraph_id` + `locator` + `char_start` + 逐字 `quote`）、`verdict`；附 `quote_summary`（逐字命中率）与 `coverage` |
+| `diff_report.md` | 实际答案 vs 金标准逐项 diff：期望/实际 `status`、claims 数、证据段、引文命中，累计一致/差异项，并列出契约回填与降级 |
+| `version_history.md` | 静态 v0 → v0.1 → v1.0.0 → v1.0.0+p1 时间线、6 条恒定不变量、回退点；`## 运行时记录` 下每次 build 追加一行真实记录 |
+| `run.log` | 真实 append-only 运行日志（UTC 时间戳、case、questions/claims、golden/diff、资产字节、`self_check`、`exit_code`） |
+| `self_check.json` | 契约键、主产物非空、五资产字节、逐字引文、`counts` 一致性、兜底（占位 payload / `input_error` 分支）、退出码等检查；`status=pass/fail` |
+
+`result.json` 只追加键（不改名、不删键）：`assets`、`golden_standard`、`diff_report`、`self_check`、`version_history`、`run_log`、`skill_version`、`asset_patch`；缺失的 `output_contract` 键按原值回填并记入 `assets.contract_repaired`。资产生成失败只写 `degradations`，退出码仍为 0。
+
 ## 5. 输出字段
 
 顶层按四组排列：标识（`case_id`、`paper_id`、`material_version`）、总状态与一句话摘要（`status`、`summary`）、
@@ -206,6 +220,7 @@ python3 -c "import json;d=json.load(open('/app/output/verify_report.json'));prin
 - [ ] `result.json` 能被 JSON 解析，`output_contract` 每个键都在顶层，`answers` 与 `result.answers` 一致；
 - [ ] `answers` 题数 = 输入题数，每题 `status` 属于四个允许值，`sub_questions` 序号从 1 连续；
 - [ ] 每个报告数值都有独立 claim，`kind` 只有 `reported`/`inferred`；
+- [ ] 五件资产（`golden_standard.json`/`diff_report.md`/`version_history.md`/`run.log`/`self_check.json`）均存在非空，`self_check.json.status == "pass"`；
 - [ ] `quote_hit_rate = 1.0`，`char_start` 逐字对上，`paragraph_id` 都来自段落清单；
 - [ ] `numeric_trace.checked == numeric_trace.traced`；
 - [ ] `partial` / `insufficient_evidence` 的题都有 `unanswered_parts`，未报告项有 `uncertainties` 记录；
@@ -220,6 +235,7 @@ python3 -c "import json;d=json.load(open('/app/output/verify_report.json'));prin
 | `SKILL.md` | 入口：用途、调用、输入发现、输出、流程、降级、自检 |
 | `scripts/run_reader.py` | 检索、取证、作答、写盘、审计（参数 `--input`、`--out`、`--case`、`--apply`、`--quiet`、`--version`） |
 | `scripts/reader_kit.py` | 案例发现与解析、数值/引文/覆盖工具、JSON/CSV 输出 |
+| `scripts/assets.py` | 五件可核验资产生成器：金标准 / 逐项 diff / 版本历史 / 运行日志 / 自检；只追加 result.json 键 |
 | `references/field_spec.md` | 字段字典、状态判定、与评分点的对应、数值痕迹审计说明 |
 | `references/term_map.md` | 中英检索词映射（通用 + 材料机械 + CS/ML + 环境光催化） |
 | `references/worked_example.md` | 最小调用示例（自拟材料，标注“示例”）与复用建议 |
