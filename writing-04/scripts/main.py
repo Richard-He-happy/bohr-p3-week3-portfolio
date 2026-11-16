@@ -9,7 +9,7 @@ proof_assets.py."""
 import argparse, difflib, hashlib, json, re, sys, tempfile, time
 from pathlib import Path
 
-ENGINE_VERSION = "2.0.0"
+ENGINE_VERSION = "1.1.0"
 SKILL_NAME = "manuscript-revision-desk"
 START_CLOCK = time.time()
 SCRIPT_DIR = Path(__file__).resolve().parent
