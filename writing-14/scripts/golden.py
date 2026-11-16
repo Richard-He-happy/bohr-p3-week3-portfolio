@@ -67,7 +67,7 @@ SPECS = (
     ("G07", "证据挂接", "每个节点至少一条 evidence，含 material + locator + 逐字 quote", "evidence", "evidence"),
     ("G08", "引文保真", "quote 是材料连续片段且 ≥ 6 字", "quote", "quote"),
     ("G09", "关系语义", "关系取 7 类词表，方向合语义且有引文；无证据的关系不画", "edge", "edge"),
-    ("G10", "标签唯一", "同一父节点下的子节点标签不得重复", "unique", "unique"),
+    ("G10", "标签唯一与长度", "同一父节点下的子节点标签不得重复，标签是名词短语且 ≤20 字", "unique", "unique"),
     ("G11", "数字可溯", "标签里的数字必须能在该节点引文或材料原文中找到", "number", "number"),
     ("G12", "可编辑性", "SVG 中每个节点一个 g，带 data-locator/data-quote，文字在 text/tspan", "svg", "svg"),
     ("G13", "契约完整", "原样回填 output_contract 全部字段，不改名不漏键", "contract", "contract"),
@@ -124,7 +124,7 @@ def build(case, contract, index, stage="build"):
                                  "verified": ok}})
     first = (mats[0].get("units") or [{}])[0] if mats else {}
     return {"schema": "mindmap-golden/1.0", "case_id": (index or {}).get("case_id"),
-            "stage": stage, "generated": stamp(), "generator": "mindmap-evidence-forge/1.0.0",
+            "stage": stage, "generated": stamp(), "generator": "mindmap-evidence-forge/1.1.0",
             "derived_from": [{"id": m.get("id"), "name": m.get("name"), "kind": m.get("kind"),
                               "bytes": m.get("bytes"), "sha1": m.get("sha1"),
                               "units": len(m.get("units") or []), "chars": m.get("chars")} for m in mats],
@@ -146,7 +146,7 @@ def build(case, contract, index, stage="build"):
                        "contract_fields": len(contract or {})}}
 
 
-def compare(gold, model, index, stage="build"):
+def compare(gold, model, index, stage="build", slots=None):
     """逐项对照：达标 / 偏差 / 缺失 / 待定，四种判定之外不写别的词。"""
     nodes = (model or {}).get("nodes") or []
     kids = {}
@@ -223,7 +223,11 @@ def compare(gold, model, index, stage="build"):
         if key in seen:
             dup.append(n["id"])
         seen[key] = n["id"]
-    put("G10", "达标" if not dup else "偏差", "重复标签 %d 个" % len(dup), "、".join(dup[:6]))
+    longest = max([len(n["label"]) for n in nodes] or [0])
+    long_labels = [n["id"] for n in nodes if len(n["label"]) > 20]
+    put("G10", "达标" if not dup and not long_labels else "偏差",
+        "重复标签 %d 个，最长标签 %d 字" % (len(dup), longest),
+        "、".join((dup + long_labels)[:6]))
 
     missing = []
     for n in nodes:
@@ -241,6 +245,14 @@ def compare(gold, model, index, stage="build"):
         if spans[-1] - spans[0] >= 14:
             skew.append("%s(%d–%d)" % (parent, spans[0], spans[-1]))
     put("G10b", "达标" if not skew else "偏差", "粒度不齐分支 %d 个" % len(skew), "、".join(skew[:5]))
+    expected = gold.get("contract_expectations") or []
+    if slots is None:
+        put("G13", "待定", "契约映射未传入", "由自检 C1 复核")
+    else:
+        lack = [e.get("field") for e in expected if e.get("field") not in slots]
+        put("G13", "达标" if not lack else "缺失",
+            "契约 %d 个字段，缺映射 %d 个" % (len(expected), len(lack)),
+            "" if not lack else "缺：%s" % "、".join(lack[:6]))
     return items
 
 
