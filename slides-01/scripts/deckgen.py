@@ -8,6 +8,10 @@ import argparse, hashlib, json, re, sys, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ooxml_kit as KIT
+try:  # 五件可核验资产（缺失时主流程照常跑，只记降级）
+    import assetkit as ASSETS
+except Exception:  # noqa: BLE001 - 包被裁剪时也不能中断主流程
+    ASSETS = None
 DEFAULT_CONTRACT = ["case_id", "status", "editable_source", "export_artifact", "content_map", "compliance_checks", "exceptions"]
 NUM_PATTERN = re.compile(r"\d+(?:[.,]\d+)*\s*(?:%|‰)?")
 FIG_PATTERN = re.compile(r"(figure|fig\.?|table|tab\.?|图|表)\s*\.?\s*(\d+[a-z]?)", re.I)
@@ -230,7 +234,17 @@ def run(argv=None):
     t_start, out, work = time.time(), Path(args.output), Path(args.work)
     out.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)
+    run_meta = {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "version": ASSETS.VERSION if ASSETS else "1.0.0",
+                "run_id": time.strftime("%Y%m%dT%H%M%S"), "argv": [str(part) for part in (argv if argv is not None else sys.argv[1:])],
+                "input": str(args.input), "output": str(args.output), "work": str(args.work)}
+    run_meta["command"] = "python %s %s" % (Path(__file__).name, " ".join(run_meta["argv"]))
+    log = ASSETS.RunLog(out / "run.log", argv=run_meta["argv"]) if ASSETS else None
+    if log:
+        log.mark("boot", "pipeline start version=%s input=%s output=%s work=%s" % (run_meta["version"], args.input, args.output, args.work))
     case, case_path, files = read_case_json(args.input)
+    if log:
+        log.mark("case", "case loaded case_id=%s files=%d case_json=%s"
+                 % (case.get("case_id") or case.get("id") or "-", len(files), "yes" if case_path else "no"))
     contract = case.get("output_contract")
     contract = [str(field) for field in contract] if isinstance(contract, list) and contract else list(DEFAULT_CONTRACT)
     contract = contract if "case_id" in contract else ["case_id"] + contract
@@ -239,46 +253,97 @@ def run(argv=None):
     env.update({"case_id": case_ref, "status": "partial"})
     env.update({"degradations": [], "errors": [], "exceptions": [], "uncertainty": [], "pending_human": [], "sources": {}, "changes": {}, "runtime": {"started": time.strftime("%Y-%m-%dT%H:%M:%S")}})
     put_json(out / "result.json", env)
+    ctx = {"out": out, "work": work, "case": case, "case_path": case_path, "files": files,
+           "contract": contract, "run_meta": run_meta, "plan": None, "parsed": None, "order": None,
+           "map_out": None, "val": None, "deck_path": None, "preview": None, "audit": None,
+           "build_info": None, "source": None, "template": None, "probes": {},
+           "log": log, "t0": t_start}
+    probes = ASSETS.fallback_probes(work, read_case_json) if ASSETS else {"empty_input": {}, "bad_json": {}}
+    ctx["probes"] = probes
+    if log:
+        log.mark("probe", "fallback probes empty_input=%s bad_json=%s"
+                 % ((probes.get("empty_input") or {}).get("ok"), (probes.get("bad_json") or {}).get("ok")))
     problems, degraded, human_todo = [], [], []
     E = lambda field, blob: problems.append({"kind": field, "detail": blob})
+    def finish():
+        """收尾链全部在 assetkit.finalize 里（资产 → result.json → run.log 收尾）；永不抛异常。"""
+        if ASSETS is None:
+            try:
+                env["runtime"] = dict(env.get("runtime") or {}, seconds=round(time.time() - t_start, 1))
+                put_json(out / "result.json", env)
+            except Exception:  # noqa: BLE001
+                pass
+            return 0
+        return ASSETS.finalize(env, ctx)
     try:
         order = read_workorder(case, files)
+        ctx["order"] = order
         candidates = [node for node in files if node.suffix.lower() in (".pdf", ".docx", ".md", ".txt") and node.stat().st_size > 1500 and not re.search(r"^task\.md$|readme", node.name, re.I)]
         decks_found = [node for node in files if node.suffix.lower() == ".pptx"]
         source = candidates[0] if candidates else None
         template = next((node for node in decks_found if re.search(r"template|master|layout|style|brand", node.name, re.I)), None) or (decks_found[0] if decks_found else None)
+        ctx["source"], ctx["template"] = source, template
+        if log:
+            log.mark("scan", "input scanned files=%d paper=%s decks=%d total_slides=%s mode=%s"
+                     % (len(files), Path(str(source)).name if source else "none", len(decks_found), order.get("total"), order.get("mode")))
         if not case_path:
             E("input", "no case.json; contract defaulted")
         if template is None:
             degraded.append({"what": "template", "detail": "no template; builtin master/layout/theme"})
         if not source:
-            env.update({"status": "input_error", "exceptions": problems + [{"kind": "input", "detail": "no paper file under %s" % args.input}], "runtime": dict(env["runtime"], seconds=round(time.time() - t_start, 1))})
-            put_json(out / "result.json", env)
-            return 0
+            env.update({"status": "input_error", "exceptions": problems + [{"kind": "input", "detail": "no paper file under %s" % args.input}],
+                        "sources": {"file": None, "engine": None, "chars": 0},
+                        "runtime": dict(env["runtime"], seconds=round(time.time() - t_start, 1))})
+            if log:
+                log.fail("input", "no paper file under %s; input_error envelope" % args.input)
+            return finish()
         parsed = KIT.read_paper(source)
         parsed["sents"], parsed["figs"], parsed["tabs"] = scan_sentences(parsed["pages"])
+        ctx["parsed"] = parsed
+        if log:
+            log.mark("extract", "engine=%s chars=%d pages=%d figures=%d tables=%d"
+                     % (parsed["engine"], len(parsed["text"]), len(parsed["pages"]), len(parsed["figs"]), len(parsed["tabs"])))
         if len(parsed["text"]) < 200:
             E("extraction", "text layer empty (engine=%s); nothing invented" % parsed["engine"])
-            env.update({"status": "partial", "exceptions": problems, "sources": {"file": str(source), "engine": parsed["engine"], "chars": len(parsed["text"])}, "runtime": dict(env["runtime"], seconds=round(time.time() - t_start, 1))})
-            put_json(out / "result.json", env)
-            return 0
+            env.update({"status": "partial", "exceptions": problems, "sources": {"file": str(source), "engine": parsed["engine"], "chars": len(parsed["text"])},
+                        "runtime": dict(env["runtime"], seconds=round(time.time() - t_start, 1))})
+            if log:
+                log.fail("extract", "text layer empty engine=%s; partial, no deck invented" % parsed["engine"])
+            return finish()
         if parsed["engine"] == "stdlib-inflate":
             degraded.append({"what": "text extraction", "detail": "python-only PDF parsing; captions may be incomplete"})
         if not parsed["figs"] and not parsed["tabs"]:
             human_todo.append({"action": "confirm figure list", "detail": "no captions matched; locators only"})
         plan_slides = compose_slides(parsed, order)
+        ctx["plan"] = plan_slides
         put_json(out / "deck_model.json", {"case_id": case_ref, "workorder": order, "paper": str(source), "template": str(template), "slides": plan_slides})
         put_json(out / "plan.json", {"case_id": case_ref, "mode": order["mode"], "total_slide_count": order["total"], "source_preservation": order["source_preservation"], "template_inheritance": order["template_inheritance"],
                                "slides": [{"n": row["n"], "role": row["role"], "title": row["title"], "claim": row["claim"], "locators": [err["locator"] for err in row["evidence"]]} for row in plan_slides]})
         env["sources"] = {"file": str(source), "engine": parsed["engine"], "chars": len(parsed["text"]), "pages": len(parsed["pages"]), "figures": len(parsed["figs"]), "tables": len(parsed["tabs"]), "template": str(template) if template else None}
+        if log:
+            log.mark("plan", "slides=%d evidence_items=%d claims=%d"
+                     % (len(plan_slides), sum(len(row["evidence"]) for row in plan_slides),
+                        sum(1 for row in plan_slides if row["claim"])))
         deck_path = out / "presentation.pptx"
         build_info = KIT.assemble_deck(plan_slides, deck_path, template=str(template) if template else None)
+        ctx["build_info"], ctx["deck_path"] = build_info, deck_path
+        if log:
+            log.mark("pptx", "written bytes=%d engine=%s slides=%d template=%s"
+                     % (deck_path.stat().st_size, build_info.get("engine"), len(plan_slides), "yes" if template else "builtin"))
         preview = KIT.render_preview_pdf(deck_path, out, work=work)
+        ctx["preview"] = preview
         if preview["degraded"]:
             degraded.append({"what": "pdf", "detail": "no office renderer; preview PDF built from the deck's own text layer (layout fidelity degraded)"})
+        if log:
+            log.mark("pdf", "written engine=%s degraded=%s path=%s"
+                     % (preview.get("engine"), preview.get("degraded"), preview.get("pdf")))
         val = {"pptx": KIT.inspect_deck(deck_path, order["total"]), "pdf": KIT.inspect_pdf(out / "presentation.pdf"), "png": {"count": 0}}
         val["pass"] = bool(val["pptx"]["ok"] and val["pdf"]["ok"])
+        ctx["val"] = val
         put_json(work / "verification.json", val)
+        if log:
+            log.mark("verify", "pptx_ok=%s slides=%s notes=%s pdf_ok=%s pdf_pages=%s"
+                     % (val["pptx"]["ok"], val["pptx"]["slides"], val["pptx"]["notes"], val["pdf"]["ok"], val["pdf"]["pages"]))
         src_lc, src_fp = parsed["text"].lower(), fingerprint(parsed["text"])
         audit = run_checks(plan_slides, src_lc, src_fp, order, build_info)
         audit["files"] = {"pptx_ok": val["pptx"]["ok"], "pdf_ok": val["pdf"]["ok"], "png": val["png"]["count"], "pptx_slides": val["pptx"]["slides"], "pdf_pages": val["pdf"]["pages"], "pptx_notes": val["pptx"]["notes"]}
@@ -289,6 +354,7 @@ def run(argv=None):
         matches = lambda err: is_quote_in_paper(err["quote"], src_lc, src_fp)
         mapping = lambda row: {"n": row["n"], "title": row["title"], "role": row["role"], "claim": row["claim"], "bullets": row["bullets"], "evidence": [dict(err, matched=matches(err)) for err in row["evidence"]], "notes": row.get("notes"), "assets": [{"path": None, "note": "caption+locator only"}]}
         map_out = {"unit": "slide", "slides": [mapping(row) for row in plan_slides], "coverage": {"slides": len(plan_slides), "with_evidence": sum(1 for row in plan_slides if row["evidence"]), "evidence_items": sum(len(row["evidence"]) for row in plan_slides), "quotes_matched": sum(1 for row in plan_slides for err in row["evidence"] if matches(err))}}
+        ctx["map_out"] = map_out
         sweep_report = structure_audit(map_out, plan_slides, val["pptx"])
         audit["content_map_completeness"] = {"rows": sweep_report["content_map_rows"], "complete": sweep_report["rows_complete"], "gaps": sweep_report["gaps"], "ok": sweep_report["rows_complete"]}
         audit["structure_consistency"] = {"row_numbers_ok": sweep_report["row_numbers_ok"], "pptx_slides": sweep_report["pptx_slides"], "pptx_notes": sweep_report["pptx_notes"], "notes_match_slides": sweep_report["notes_match_slides"], "ok": sweep_report["ok"]}
@@ -296,20 +362,26 @@ def run(argv=None):
             audit["pass"] = False
             audit["failures"] = (audit.get("failures") or []) + ["structure audit: slide/notes/content_map rows disagree"]
         put_json(work / "structure_check.json", sweep_report)
+        ctx["audit"] = audit
+        if log:
+            log.mark("audit", "checks_pass=%s failures=%d content_map_rows=%d structure_ok=%s"
+                     % (audit.get("pass"), len(audit.get("failures") or []), len(map_out["slides"]),
+                        (audit.get("structure_consistency") or {}).get("ok")))
         env.update({"status": "ok" if (audit["pass"] and val["pass"] and not problems) else "partial", "editable_source": {"path": str(deck_path), "format": "pptx", "slides": val["pptx"]["slides"], "bytes": deck_path.stat().st_size, "sha256": hashlib.sha256(deck_path.read_bytes()).hexdigest(), "engine": build_info.get("engine"), "notes_slides": val["pptx"]["notes"],
                                       "template": {"path": build_info.get("template"), "master": build_info.get("master"), "layouts_used": build_info.get("layouts_used"), "inherited": build_info.get("theme_unchanged") is not False}},
                   "export_artifact": {"pdf": {"path": preview.get("pdf"), "pages": val["pdf"]["pages"], "engine": preview.get("engine"), "valid": val["pdf"]["ok"]}, "png": {"dir": None, "count": 0}},
                   "content_map": map_out, "compliance_checks": audit, "exceptions": problems, "degradations": degraded, "pending_human": human_todo,
                   "changes": {"artifact": "presentation.pptx", "engine": build_info.get("engine"), "slides": len(plan_slides), "action": "modify" if template else "add"},
                   "runtime": dict(env["runtime"], seconds=round(time.time() - t_start, 1), model_requests=0)})
-        put_json(out / "result.json", env)
-        print(json.dumps({"status": env["status"], "slides": len(plan_slides), "pptx": str(deck_path), "pdf": preview.get("pdf"), "checks_pass": audit["pass"], "seconds": env["runtime"]["seconds"]}))
+        print(json.dumps({"status": env["status"], "slides": len(plan_slides), "pptx": str(deck_path), "pdf": preview.get("pdf"),
+                          "checks_pass": audit["pass"], "seconds": round(time.time() - t_start, 1)}))
+        return finish()
     except Exception as err:
         env["errors"] = (env.get("errors") or []) + [{"kind": "runtime", "detail": "%s: %s" % (type(err).__name__, str(err)[:300])}]
+        if log:
+            log.fail("runtime", "%s: %s" % (type(err).__name__, str(err)[:200]))
         env["runtime"] = dict(env.get("runtime") or {}, seconds=round(time.time() - t_start, 1))
-        put_json(out / "result.json", env)
-        print(json.dumps({"status": env.get("status", "partial"), "error": str(err)[:200]}))
-    return 0
+        return finish()
 if __name__ == "__main__":
     try:
         sys.exit(run())
