@@ -12,6 +12,10 @@ try:
     import audit_kit as AK
 except Exception:
     AK = None
+try:
+    import evidence_assets as EA
+except Exception:
+    EA = None
 CONTRACT_KEYS = ("case_id", "deliverable", "preserved_facts", "evidence_map", "change_log")
 SUPPORT_FILES = ("proposal.md", "evidence_map.json", "goal_matrix.md", "planning_units.json",
                  "risks.md", "pending_human.json", "draft_boundary.md")
@@ -323,6 +327,8 @@ def prepare_run(inp, out):
     ctx["t0"] = time.time()
     ctx["sources"] = AK.scan_sources(inp) if AK else []
     facts = AK.harvest_facts(ctx["sources"]) if AK else []
+    if EA:
+        EA.note("scan_done", sources=len(ctx["sources"]), facts=len(facts))
     return ctx, build_plan(ctx), facts
 def run_init(inp, out):
     ctx, plan, facts = prepare_run(inp, out)
@@ -351,6 +357,8 @@ def run_init(inp, out):
     result["stage"] = "init"
     result["limits"] = "仅骨架与证据抽取"
     dump_json(out / "result.json", result)
+    if EA:
+        EA.note("run_done", stage="init", status="partial", sources=len(ctx["sources"]))
     print(json.dumps({"stage": "init", "case_id": ctx["case_id"], "output": str(out),
                       "sources": len(ctx["sources"]),
                       "sections": [s["title"] for s in plan["sections"]],
@@ -407,6 +415,8 @@ def run_finalize(inp, out):
     result = compose_result(ctx, out, plan, audit, status=status)
     result["stage"] = "final"
     dump_json(out / "result.json", result)
+    if EA:
+        EA.note("run_done", stage="final", status=status, issues=audit.get("counts"))
     metrics = audit.get("metrics", {})
     print(json.dumps({"stage": "final", "case_id": ctx["case_id"], "status": status,
                       "char_count": metrics.get("char_total"),
@@ -414,6 +424,13 @@ def run_finalize(inp, out):
                       "issues": audit.get("counts"),
                       "result": str(out / "result.json")}, ensure_ascii=False, indent=2))
     return 0
+def flush_assets(inp, out, stage):
+    if not EA:
+        return
+    try:
+        EA.finish(inp, out, stage, 0)
+    except Exception:
+        pass
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="七要素基金申请书 Skill：init 建骨架；finalize 回检与契约回填。")
@@ -425,13 +442,17 @@ def main(argv=None):
     args = parser.parse_args(argv)
     inp = Path(args.input).expanduser().resolve() if args.input else Path("/input")
     out = pick_out_dir(args.output)
+    stage = "init" if args.command == "init" else "final"
     try:
         if args.command == "finalize":
-            return run_finalize(inp, out)
-        if args.command == "all":
+            code = run_finalize(inp, out)
+        elif args.command == "all":
             run_init(inp, out)
-            return run_finalize(inp, out)
-        return run_init(inp, out)
+            code = run_finalize(inp, out)
+        else:
+            code = run_init(inp, out)
+        flush_assets(inp, out, stage)
+        return code
     except Exception:
         detail = traceback.format_exc(limit=4)
         try:
@@ -449,6 +470,7 @@ def main(argv=None):
             dump_json(out / "result.json", rescue)
         except Exception:
             pass
+        flush_assets(inp, out, stage)
         print(json.dumps({"status": "partial", "error": detail.splitlines()[-1]},
                          ensure_ascii=False))
         return 0
