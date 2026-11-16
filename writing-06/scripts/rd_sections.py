@@ -9,10 +9,18 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rd_material as M  # noqa: E402
+
+try:  # verification assets are additive: the core flow must survive their loss
+    import rd_assets as A  # noqa: E402
+    ASSET_IMPORT_ERROR = None
+except Exception as _asset_exc:  # pragma: no cover - exercised by tests only
+    A, ASSET_IMPORT_ERROR = None, "%s: %s" % (type(_asset_exc).__name__, _asset_exc)
+
 
 VERSION = "1.0.0"
 SCAN = M.scan_quantities
@@ -21,6 +29,51 @@ CAUSAL = "导致 造成 因为 由于 机制 证明 证实 调控 cause because 
 HYPE = "证明 证实 确证 首次 prove proven confirm definitiv establish".split()
 BOUNDARY = "局限 不能排除 相关不等于因果 不能证明 不推断因果 limitation association".split()
 TESTED = r"p\s*[<>=]\s*0?\.\d+|ANOVA|t-?test|Mann|Kruskal"
+ASSET_FIELDS = ("golden_standard", "diff_report", "version_history", "run_log", "self_check")
+
+
+def _stage_log(target, stage, event, **fields):
+    """Best-effort run.log append; never disturbs the core flow."""
+    try:
+        if A is not None:
+            A.runlog(target, stage, event, **fields)
+    except Exception:
+        pass
+
+
+def _fallback_assets(out, exc):
+    """Ensure the five assets exist when rd_assets itself fails."""
+    message = "%s: %s" % (type(exc).__name__, exc)
+    try:
+        if A is not None:
+            A.safe_assets(out, exc)
+            return
+    except Exception:
+        pass
+    try:
+        out = Path(out)
+        out.mkdir(parents=True, exist_ok=True)
+        stubs = (
+            ("golden_standard.json", json.dumps(
+                {"schema": "golden-standard/1", "status": "safe_fail", "error": message,
+                 "items": [], "note": "assets module unavailable"}, ensure_ascii=False, indent=2)),
+            ("diff_report.md", "# 金标准对照报告（safe_fail）\n\n- 错误：`%s`\n" % message),
+            ("version_history.md", "# 版本记录（safe_fail）\n\n- v0 → v1.0.0\n- 错误：`%s`\n" % message),
+            ("self_check.json", json.dumps(
+                {"schema": "self-check/1", "overall_pass": False, "status": "safe_fail",
+                 "error": message}, ensure_ascii=False, indent=2)),
+        )
+        for name, body in stubs:
+            path = out / name
+            if not path.is_file() or path.stat().st_size == 0:
+                path.write_text(body if body.endswith("\n") else body + "\n", encoding="utf-8")
+        log = out / "run.log"
+        if not log.is_file() or log.stat().st_size == 0:
+            log.write_text("# run.log — safe_fail\n%s | stage=build | event=error | error=%s\n"
+                           % (M.stamp(), message), encoding="utf-8")
+    except Exception:
+        pass
+
 
 # Fallback prose for the no-draft case.
 PHRASES = {
@@ -263,6 +316,7 @@ def cmd_init(args):
     if not root.is_dir():
         payload.update({"status": "input_error", "errors": ["input_error %s" % root]})
         M.write_json(out / "result.json", payload)
+        _stage_log(out, "init", "input_error", status="input_error", input=str(root))
         print("INPUT ERROR: %s is not a directory" % root)
         return
     index = M.build_index(root, keys)
@@ -276,6 +330,11 @@ def cmd_init(args):
         payload.update({"status": "insufficient_evidence",
                         "pending_human": ["no readable text block under %s" % root]})
     M.write_json(out / "result.json", payload)
+    _stage_log(out, "init", "indexed", status=payload.get("status"), contract=len(keys),
+               materials=len(index.get("materials") or []),
+               blocks=len(index.get("blocks") or []),
+               errors=len(index.get("errors") or []),
+               case_error=str(case_error or "none"))
 
 
 def cmd_check(args):
@@ -291,13 +350,31 @@ def cmd_check(args):
         print("  %-4s %-15s %s%s" % (issue["level"][:4], issue["code"], issue["message"][:110],
                                      " @" + issue["locator"] if issue["locator"] else ""))
     print("NEXT:", "fix errors" if c.get("errors") else "build")
+    _stage_log(Path(args.out), "check", "audited",
+               errors=c.get("errors", 0), warnings=c.get("warnings", 0),
+               evidence_ok=c.get("evidence_ok", 0), evidence_failed=c.get("evidence_failed", 0),
+               numbers_verified=c.get("numbers_verified", 0),
+               numbers_total=c.get("numbers_total", 0))
 
 
 def cmd_build(args):
+    t0 = time.monotonic()
     out, work = Path(args.out), Path(args.work)
     for path in (out, work):
         path.mkdir(parents=True, exist_ok=True)
     index = M.index_for(args)
+    if "case_id" not in index:  # build without a prior init: keep the contract faithful
+        case, case_error = M.read_case(Path(args.input))
+        index.update({"case_id": M.pick(case, ["case_id", "caseid"]) if isinstance(case, dict) else None,
+                      "case_error": case_error,
+                      "contract_raw": M.pick(case, ["output_contract", "contract"])
+                      if isinstance(case, dict) else None})
+    t_index = time.monotonic()
+    _stage_log(out, "build", "index", duration_ms=int((t_index - t0) * 1000),
+               materials=len(index.get("materials") or []),
+               blocks=len(index.get("blocks") or []),
+               tables=len(index.get("tables") or []),
+               case_error=str(index.get("case_error") or "none"))
     contract = index.get("contract") or list(M.BASE_FIELDS)
     case_id = index.get("case_id")
     draft_path = Path(args.draft) if args.draft else work / "draft.json"
@@ -383,16 +460,66 @@ def cmd_build(args):
     metrics["self_audit"] = {k: verdict[k] for k in ("passed", "failed", "passed_names", "failed_names")}
     if verdict["failed"]:
         payload["degradations"] = steps + ["self_audit_failed:" + n for n in verdict["failed_names"]]
+    # 1) core result.json first: a crash in the asset stage must still leave a legal file
     M.write_json(out / "result.json", payload)
-    print("BUILD %s status=%s mode=%s contract=%d/%d self-audit=%d/%d %dB results=%d/%d numbers=%d/%d"
+    _stage_log(out, "build", "core_artifacts",
+               duration_ms=int((time.monotonic() - t_index) * 1000),
+               manuscript_bytes=len(manuscript.encode("utf-8")), sections=len(sections),
+               evidence=len(evidence), facts=len(facts),
+               numbers="%d/%d" % (c.get("numbers_verified", 0), c.get("numbers_total", 0)),
+               contract="%d/%d" % (filled, len(contract)))
+    # 2) five verification assets + five additive result.json fields
+    t_assets = time.monotonic()
+    assets_meta = {}
+    try:
+        if A is None:
+            raise RuntimeError(ASSET_IMPORT_ERROR or "rd_assets unavailable")
+        assets_meta = A.finalize(out, work, index, payload, manuscript,
+                                 dict(c, results_map_sections=sections,
+                                      evidence=evidence, facts=facts), mode)
+        if isinstance(assets_meta, dict):
+            for field in ASSET_FIELDS:
+                if field in assets_meta:
+                    payload[field] = assets_meta[field]
+            if (assets_meta.get("self_check") or {}).get("overall_pass") is False:
+                payload["degradations"] = list(payload.get("degradations") or []) + \
+                    ["self_check_overall_false"]
+    except Exception as exc:
+        note = "assets_failed:%s: %s" % (type(exc).__name__, exc)
+        payload["degradations"] = list(payload.get("degradations") or []) + [note]
+        _stage_log(out, "build", "assets_failed", error=note)
+        _fallback_assets(out, exc)
+        for field, name in (("golden_standard", "golden_standard.json"),
+                            ("diff_report", "diff_report.md"),
+                            ("version_history", "version_history.md"),
+                            ("run_log", "run.log"), ("self_check", "self_check.json")):
+            path = out / name
+            if path.is_file():
+                payload[field] = {"path": name, "bytes": path.stat().st_size,
+                                  "status": "safe_fail"}
+    # 3) final result.json carrying the five new top-level fields
+    for note in payload.get("degradations") or []:
+        _stage_log(out, "build", "degrade", detail=note)
+    if errs:
+        _stage_log(out, "build", "errors", count=len(errs), first=str(errs[0]))
+    M.write_json(out / "result.json", payload)
+    _stage_log(out, "build", "result_final",
+               duration_ms=int((time.monotonic() - t_assets) * 1000),
+               result_bytes=(out / "result.json").stat().st_size,
+               assets=len([field for field in ASSET_FIELDS if field in payload]),
+               status=payload.get("status"))
+    print("BUILD %s status=%s mode=%s contract=%d/%d self-audit=%d/%d %dB results=%d/%d "
+          "numbers=%d/%d assets=%d/5"
           % (out, status, mode, filled, len(contract), verdict["passed"],
              verdict["passed"] + verdict["failed"], len(manuscript.encode("utf-8")),
              c.get("results_sections", 0), c.get("discussion_sections", 0),
-             c.get("numbers_verified", 0), c.get("numbers_total", 0)))
+             c.get("numbers_verified", 0), c.get("numbers_total", 0),
+             len([field for field in ASSET_FIELDS if field in payload])))
 
 
 def safe_fail(args, exc):
     """Last resort: leave a legal result.json that still carries every contract key."""
+    out_dir = Path(getattr(args, "out", "/app/output"))
     try:
         case, _ = M.read_case(Path(getattr(args, "input", "/input")))
         keys = M.contract_keys(case) if isinstance(case, dict) else list(M.BASE_FIELDS)
@@ -404,7 +531,24 @@ def safe_fail(args, exc):
                         "degradations": ["safe_fail"],
                         "runtime": {"version": VERSION, "stage": "safe_fail", "wrote_at": M.stamp()}},
                        **{k: None for k in keys if str(k).lower() != "case_id"})
-        M.write_json(Path(getattr(args, "out", "/app/output")) / "result.json", payload)
+        M.write_json(out_dir / "result.json", payload)
+    except Exception:
+        pass
+    try:
+        _fallback_assets(out_dir, exc)
+    except Exception:
+        pass
+    try:  # the five new fields exist even on the crash path
+        current, _ = M.read_json(out_dir / "result.json")
+        if isinstance(current, dict):
+            for field, name in (("golden_standard", "golden_standard.json"),
+                                ("diff_report", "diff_report.md"),
+                                ("version_history", "version_history.md"),
+                                ("run_log", "run.log"), ("self_check", "self_check.json")):
+                path = out_dir / name
+                current[field] = {"path": name, "status": "safe_fail",
+                                  "bytes": path.stat().st_size if path.is_file() else 0}
+            M.write_json(out_dir / "result.json", current)
     except Exception:
         pass
     print("ERROR %s: %s" % (type(exc).__name__, exc))
@@ -427,12 +571,24 @@ def main(argv=None):
     if not args.cmd:
         parser.print_help()
         return 0
+    started = time.monotonic()
+    out_dir = Path(getattr(args, "out", "/app/output"))
+    _stage_log(out_dir, args.cmd, "start",
+               input=str(getattr(args, "input", "")),
+               work=str(getattr(args, "work", "")),
+               out=str(getattr(args, "out", "")),
+               draft=str(getattr(args, "draft", "") or "<work>/draft.json"))
     try:
         {"init": cmd_init, "check": cmd_check, "build": cmd_build}[args.cmd](args)
     except SystemExit:
         raise
     except Exception as exc:
+        _stage_log(out_dir, args.cmd, "error",
+                   exc="%s: %s" % (type(exc).__name__, exc))
         safe_fail(args, exc)
+    finally:
+        _stage_log(out_dir, args.cmd, "done", exit=0,
+                   duration_ms=int((time.monotonic() - started) * 1000))
     return 0
 
 
