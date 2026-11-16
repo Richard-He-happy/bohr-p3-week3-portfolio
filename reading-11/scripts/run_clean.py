@@ -5,7 +5,7 @@
 调用：python3 run_clean.py --input /input --output /app/output [--determinism]
 """
 
-import argparse ,csv ,json ,subprocess ,sys ,traceback 
+import argparse ,csv ,json ,subprocess ,sys ,time ,traceback 
 
 from pathlib import Path 
 
@@ -14,9 +14,38 @@ sys .path .insert (0 ,str (Path (__file__ ).resolve ().parent ))
 from clean_engine import (ENGINE_VERSION ,UnitRegistry ,build_claims ,form_row ,tally_rules ,find_duplicates ,read_json ,natural_parts ,key_form ,read_text_file ,classify_columns ,
 build_records ,write_csv ,write_json )
 
+try :# 可核验资产层（v1.1.0 增补）：缺失时只记一条降级，回到 v1.0.0 行为
+    import evidence_assets as evidence 
+except Exception :# 回退路径：删除 scripts/evidence_assets.py 即生效
+    evidence =None 
+
 REF_DIR =Path (__file__ ).resolve ().parent .parent /"references"
 
 NOTE_MARKERS =("note","comment","remark","memo","flag")
+
+VOLATILE_ASSETS ={"run.log"}# 承载真实时间戳与耗时，--determinism 按设计不参与逐字节比对
+
+
+def new_doc ():
+    """result.json 骨架：所有路径（含早退与异常）都以它为基础，契约字段由 persist_result 回填。"""
+    return {"case_id":None ,"status":"partial","result":{},"claims":[],"uncertainties":[],
+    "uncertainty":[],"sources":[],"pending_human":[],"errors":[],"degradations":[],
+    "changes":[],"contract_mapping":{},
+    "runtime":{"tool":"literature-extraction-standardizer","version":ENGINE_VERSION ,
+    "python":sys .version .split ()[0 ]}}
+
+
+def mark (ctx ,phase ,ok =True ,**detail ):
+    """向 run.log 追加一条阶段事件；时间戳/耗时只进 run.log，不进入确定性产物。"""
+    events =ctx .get ("ev")
+    if events is None :
+        return 
+    try :
+        events .append ({"ts":time .strftime ("%Y-%m-%dT%H:%M:%S%z"),
+        "elapsed":round (time .time ()-float (ctx .get ("t0")or time .time ()),3 ),
+        "phase":phase ,"ok":bool (ok ),"detail":detail })
+    except Exception :
+        pass 
 
 ARTIFACT_LEAVES ={"table|sheet|dataset":"cleaned.csv","change|history|log":"change_log.csv",
 "review|hold|pending":"pending_review.csv","anomal|quality|issues":"anomaly_report.md",
@@ -176,8 +205,13 @@ def pipeline (ctx ):
     ureg ,found =UnitRegistry (registry ),scan_inputs (indir )
     casedoc =found ["case"]or {}
     doc ["case_id"],ctx ["tpl"]=casedoc .get ("case_id"),casedoc .get ("output_contract")or {}
+    ctx ["ureg"],ctx ["case"],ctx ["contract"]=ureg ,casedoc ,ctx ["tpl"]
+    ctx ["case_file"]=str (found ["cp"])if found ["cp"]else ""
+    ctx ["record_files"]=[str (obj )for obj in found ["records"]]
     if found ["case"]is None :
         doc ["degradations"].append ({"stage":"scan_inputs","note":"no case.json"})
+    mark (ctx ,"scan_inputs",case =bool (found ["case"]),record_files =len (found ["records"]),
+    rule_files =len (found ["rules"]),schema_files =len (found ["schema"]))
     rulelist ,shadowed =merge_rule_sets (found ,book )
     target =dict (book .get ("target_table",{}))
     colroles ={exc .get ("role"):list (exc .get ("aliases",[]))for exc in book .get ("column_roles",[])}
@@ -191,6 +225,9 @@ def pipeline (ctx ):
             for keyv ,tag in (("synonyms","material"),("material_synonyms","material"),
             ("indicator_synonyms","indicator")):
                 aliases [tag ].update ({key_form (objv ):y for objv ,y in (obj .get (keyv )or {}).items ()})
+    ctx ["rulebook"],ctx ["target"]=book ,target 
+    ctx ["rules"]={rec ["rule_id"]:rec for rec in rulelist }
+    mark (ctx ,"rules_merged",rules =len (rulelist ),suppressed =len (shadowed ))
 
     tablist ,srclog =[],[]
     for path in found ["records"]:
@@ -213,9 +250,12 @@ def pipeline (ctx ):
             tablist .append ({"file":path ,"rows":cells })
         else :
             doc ["degradations"].append ({"stage":"read","file":path .name ,"note":"no rows (R020)"})
+    mark (ctx ,"read_records",tables =len (tablist ),rows =sum (len (tab ["rows"])for tab in tablist ),
+    failed_files =len (doc ["errors"]))
     if not tablist :
         doc ["degradations"].append ({"stage":"scan_inputs","note":"no record table"})
         doc ["status"]="insufficient_evidence"
+        mark (ctx ,"no_record_table",ok =False )
         return 
 
     longrows ,colmap =[],[]
@@ -230,10 +270,17 @@ def pipeline (ctx ):
         colmap +=[{"original":col ,"file":tab ["file"].name ,"target":rolemap .get (col ,""),"mapped":col in rolemap ,
         "basis":("synonym hit -> %s"%rolemap [col ])if col in rolemap 
         else "no hit; kept as condition/annotation"}for col in colnames ]
-        longrows +=build_records (tab ,rolemap ,condcols ,aliases ["material"],aliases ["indicator"],doc )
+        built =build_records (tab ,rolemap ,condcols ,aliases ["material"],aliases ["indicator"],doc )
+        for rec in built :# 资产层把握 quote 绑定到具体输入文件
+            rec ["_file"]=tab ["file"].name 
+        longrows +=built 
+    ctx ["longrows"]=longrows 
+    mark (ctx ,"columns_mapped",columns =len (colmap ),
+    mapped =len ([col for col in colmap if col ["mapped"]]),input_rows =len (longrows ))
     if not longrows :
         doc ["degradations"].append ({"stage":"build_records","note":"no measurable row"})
         doc ["status"]="insufficient_evidence"
+        mark (ctx ,"no_measurable_row",ok =False )
         return 
 
     cleanrows ,deltas2 ,holds2 ,doubts ,straight =[],[],[],[],0 
@@ -244,7 +291,10 @@ def pipeline (ctx ):
         holds2 +=holds 
         doubts +=un 
         straight +=1 if (not deltas and obj ["value"]is not None )else 0 
+    mark (ctx ,"rows_cleaned",rows =len (cleanrows ),changed_values =len (deltas2 ),
+    pending_review =len (holds2 ))
     merged ,clashes =find_duplicates (cleanrows ,book ,doc )
+    mark (ctx ,"dedupe",merged =len (merged ),conflicts =len (clashes ))
     outfields =["row_id","source_document_id","source_locator","indicator","material","condition_summary",
     "value","value_low","value_high","value_err","value_text","unit","original_field",
     "original_value","original_unit","rule_ids","judgment_key","status","duplicate_of","note"]
@@ -271,6 +321,8 @@ def pipeline (ctx ):
     uto =dict (registry )
     uto ["observed_conversions"]=[seen [keyv ]for keyv in sorted (seen )]
     write_json (outdir /"unit_table.json",uto )
+    mark (ctx ,"artifacts_written",tables =3 ,json_files =3 ,rows =len (cells ),
+    change_rows =len (deltas2 ))
 
     stat ={"input_rows":len (longrows ),"cleaned_rows":len (cells ),"changed_values":len (deltas2 ),
     "unchanged_values":straight ,"pending_review":len (holds2 ),"anomalies":len (holds2 )+len (doubts ),
@@ -358,38 +410,67 @@ def main (argv =None ):
     else base /"output")
     outdir .mkdir (parents =True ,exist_ok =True )
     if args .determinism :
-        dg =[]
+        dg ,skipped =[],["none"]
         for keyv in ("_d1","_d2"):
             detail =outdir /keyv 
             detail .mkdir (parents =True ,exist_ok =True )
             subprocess .run ([sys .executable ,"-B",str (Path (__file__ ).resolve ()),"--input",str (indir ),
             "--output",str (detail )],capture_output =True )
-            dg .append ({path .name :path .read_bytes ()for path in sorted (detail .iterdir ())if path .is_file ()})
+            files ={path .name :path .read_bytes ()for path in sorted (detail .iterdir ())if path .is_file ()}
+            skipped =sorted (name for name in files if name in VOLATILE_ASSETS )or ["none"]
+            dg .append ({name :data for name ,data in files .items ()if name not in VOLATILE_ASSETS })
             for path in sorted (detail .iterdir ()):
                 path .unlink ()
             detail .rmdir ()
         diff =sorted (cname for cname in set (dg [0 ])|set (dg [1 ])if dg [0 ].get (cname )!=dg [1 ].get (cname ))
-        print ("[determinism] %s %s"%("identical"if not diff else "DIFFERS",diff ))
+        print ("[determinism] %s %s excluded_volatile=%s"
+        %("identical"if not diff else "DIFFERS",diff ,",".join (skipped )))
         return 0 
-    doc ={"case_id":None ,"status":"partial","result":{},"claims":[],"uncertainties":[],
-    "uncertainty":[],"sources":[],"pending_human":[],"errors":[],"degradations":[],
-    "changes":[],"contract_mapping":{},
-    "runtime":{"tool":"literature-extraction-standardizer","version":ENGINE_VERSION ,
-    "python":sys .version .split ()[0 ]}}
+    doc =new_doc ()
     write_json (outdir /"result.json",doc )# 先写 partial 结果：即使中断也留下合法产出
-    ctx ={"ind":indir ,"out":outdir ,"res":doc ,"a":args ,"tpl":{}}
+    partial_size =(outdir /"result.json").stat ().st_size if (outdir /"result.json").exists ()else 0 
+    ctx ={"ind":indir ,"out":outdir ,"res":doc ,"a":args ,"tpl":{} ,"ev":[] ,"t0":time .time (),
+    "partial_at_start":{"written":True ,"file":"result.json","bytes":partial_size },
+    "probe":{"pipeline":pipeline ,"persist":persist_result ,"doc_factory":new_doc},
+    "ref_files":[str (REF_DIR /"rulebook.json")]}
+    mark (ctx ,"start",input =str (indir ),output =str (outdir ))
+    mark (ctx ,"partial_result",bytes =partial_size )
     try :
         pipeline (ctx )
     except Exception as exc :
         doc ["errors"].append ({"stage":"pipeline","error":"%s: %s"%(type (exc ).__name__ ,exc ),
         "traceback":traceback .format_exc (limit =3 )[-800 :]})
+        mark (ctx ,"pipeline",ok =False ,error ="%(t)s: %(e)s"%{"t":type (exc ).__name__ ,"e":exc })
     persist_result (ctx )
+    mark (ctx ,"contract_backfilled",keys =len (doc .get ("contract_mapping")or {}),
+    case_id =doc .get ("case_id"),status =doc .get ("status"))
     try :
         stat =(doc .get ("result")or {}).get ("counts")or {}
         if stat :
             verify_written_files (outdir ,stat ,doc )
+            mark (ctx ,"verify",passed =True ,counters =len (stat ))
     except Exception as exc :
         print ("[verify_written_files] skipped: %s"%exc )
+        mark (ctx ,"verify",ok =False ,error =str (exc ))
+    if evidence is not None :
+        try :# 5 个可核验资产：build/finalize 阶段无条件写出
+            summary =evidence .emit_assets (outdir ,ctx )
+            doc .update (summary )
+            mark (ctx ,"assets_attached",ok =True ,assets =len (summary ))
+            persist_result (ctx )# 把 5 个汇总键覆盖进 result.json
+            print ("[evidence_assets] golden items=%s, diff met/deviation/missing=%s/%s/%s, self_check=%s"
+            %(summary ["golden_standard"].get ("items"),summary ["diff_report"].get ("met"),
+            summary ["diff_report"].get ("deviation"),summary ["diff_report"].get ("missing"),
+            summary ["self_check"].get ("ok")))
+        except Exception as exc :
+            doc ["degradations"].append ({"stage":"evidence_assets",
+            "note":"%s: %s"%(type (exc ).__name__ ,exc )})
+            persist_result (ctx )
+            print ("[evidence_assets] degraded: %s"%exc )
+    else :
+        doc ["degradations"].append ({"stage":"evidence_assets","note":"module missing (rollback path)"})
+        persist_result (ctx )
+        print ("[evidence_assets] module missing: original 9 artifacts only (v1.0.0 rollback path)")
     return 0 
 
 
