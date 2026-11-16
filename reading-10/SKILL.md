@@ -1,7 +1,7 @@
 ---
 name: reading-bench-forge
-description: 在评测现场把 /input 里的科研材料锻造成一套可判分的文献阅读题集：Agent 亲手出题并写评分锚点，脚本负责材料索引、逐字引文核对、0/1/2 点级算分、报告渲染与 result.json 契约回填。适合文献阅读 Benchmark 建设、题集可判性审计、引文抽查与版本对照。
-version: 1.0.0
+description: 在评测现场把 /input 里的科研材料锻造成一套可判分的文献阅读题集：Agent 亲手出题并写评分锚点，脚本负责材料索引、逐字引文核对、0/1/2 点级算分、报告渲染与 result.json 契约回填；build 收尾还会自动落五件可核验资产（金标准/逐项对照/版本账本/真实日志/自检回执）。适合文献阅读 Benchmark 建设、题集可判性审计、引文抽查与版本对照。
+version: 1.1.0
 ---
 
 # 文献阅读题集锻造包（reading-bench-forge）
@@ -63,7 +63,10 @@ version: 1.0.0
 
 材料清单会打印 `paras` / `chars` / `status`；带 `!` 的那一行表示文本质量或解析有降级，出题时要当心。
 
-## 4. 五件产物与 result.json
+## 4. 主产物、可核验资产与 result.json
+
+**五件主产物**（契约固定，v1.0.0 起未变）与 **五件可核验资产**（v1.1.0 起由 build 收尾自动追加，纯增量，
+细节见 §17）：
 
 | 产物 | 内容 | 谁读 |
 |---|---|---|
@@ -72,6 +75,11 @@ version: 1.0.0
 | `scoring.json` | 逐题逐点的 0/1/2、basis、locator、aggregate、pending_human | 分数复核 |
 | `report.md` | 一次评测的凭证：材料表 / 逐题表 / 评分汇总 / 缺口 | 汇报（不用打开 JSON） |
 | `result.json` | 信封 + 契约回填 | 平台与下游 |
+| `golden_standard.json` | 独立金标准：契约/材料/题卡/锚点/0-2 评分表/汇总的期望值与复算口径，每项带 source locator + 逐字 quote | 审计、复核 |
+| `diff_report.md` | 实际 vs 金标准逐项对照 + 评分表自洽复算（期望分/实际分/题分/aggregate） | 复核人 |
+| `version_history.md` | 静态版本账本 v0.0.1 → v1.1.0 + 回退方式 + 本次运行段 | 维护者 |
+| `run.log` | 本次 build 的真实阶段日志（唯一承载时间戳的资产） | 排障 |
+| `self_check.json` | 契约/主产物/引文/计数/兜底/退出码的机器回执 | 平台与复核人 |
 
 `result.json` 是"信封 + 契约回填"两层结构。信封固定带五组信息：运行标识与状态（`case_id` /
 `status` / `stage` / `skill`）、追溯入口（`outputs` / `runtime` / `sources`）、结果摘要
@@ -203,6 +211,9 @@ partial `result.json`。**对照跑**：同一份输入喂给手头的基线实�
 - [ ] `anchors.json` 里 `verified` 全为真；凡是有假值的题，必须出现在 `rejected` 里而不是分数里；
 - [ ] `scoring.json.aggregate` 的 `n2 + n1 + n0` 等于 `n_points`，且 `runtime.self_audit.ok` 为真；
 - [ ] `report.md` 四段齐全：材料表、逐题表、评分汇总、缺口；
+- [ ] `build` 后输出根有 10 件产物（5 主产物 + 5 可核验资产），后 5 件均非空，`self_check.json.ok` 为真；
+- [ ] `golden_standard.json` 每项都有 source locator + 逐字 quote（`quote_hit_rate=1.0`），
+      `diff_report.md` 的评分表自洽结论为 `PASS`，`result.json` 出现 5 个资产汇总键；
 - [ ] 包里干净：没有 `__pycache__`、`.pyc`、临时输出、大二进制，也没有预制答案。
 
 ## 13. 最小调用示例（示例，非正式案例结果）
@@ -236,6 +247,9 @@ partial `result.json`。**对照跑**：同一份输入喂给手头的基线实�
 
 - `scripts/run_build.py`：命令行四 verb（init / show / check / build），≤25KB；
 - `scripts/reading_core.py`：材料抽取、索引、引文定位、题卡校验、result.json 外壳，≤25KB；
+- `scripts/bench_golden.py`：金标准独立推导（原始 JSON 切片、段落复定位、0/1/2 与 aggregate 复算），只被下方资产层调用；
+- `scripts/bench_assets.py`：资产层入口（版本账本/运行日志/降级输入子进程探针/资产编排与失败关闭）；
+- `scripts/bench_diff.py`：逐项对照报告渲染 + `self_check.json` 的机器回执；
 - `references/question-spec.md`：草稿字段字典、check 规则表、出题建议；
 - `references/contract-map.md`：result.json 字段字典、三指针映射、状态与降级对照；
 - `references/maintenance.md`：换案例、当组件、扩展点、已知限制、变更记录；
@@ -248,7 +262,8 @@ partial `result.json`。**对照跑**：同一份输入喂给手头的基线实�
 - 改评分口径（覆盖度阈值 0.6、档位定义）属于**语义变更**：升版本号，并在
   `references/maintenance.md` 的变更表里记一条，否则历史分数不可比。
 
-版本：1.0.0（首次交付：Agent 主导出题 + 确定性兜底 + 契约回填 + 6 项结构自检 + 路径参数化）。
+版本：1.1.0（v1.0.0 主流程与契约不变；v1.1.0 在 finalize 增补 5 件可核验资产与 5 个 result.json
+汇总键，见 §17。完整版本账本、回退方式与运行时事实写在每次输出目录的 `version_history.md`。）
 
 ## 16. 设计问答：为什么是这几条线
 
@@ -271,3 +286,25 @@ partial `result.json`。**对照跑**：同一份输入喂给手头的基线实�
 **Q4：为什么不干脆扩大题量？**
 题量增长带来的是模板化风险：同一个 rubric 结构复制十遍，重复度上去了，区分度没上去。
 本包更看重「每种题型至少一条、可判率优先、缺口写清楚」，之后才是加题。
+
+## 17. 可核验资产（v1.1.0，build/finalize 自动产出）
+
+`build` 写完五件主产物后，会无条件调用 `scripts/bench_assets.py`，在同一输出目录追加五件可核验资产。
+**入口、四个 verb、路径、五件主产物 schema 与退出码恒 0 都不变**；资产层是纯增量，可用
+`READBENCH_SKIP_ASSETS=1` 关闭（回到 v1.0.0 行为），或删掉三个 `bench_*.py` 模块。
+
+| 资产 | 生成方式 | 复核要点 |
+|---|---|---|
+| `golden_standard.json` | `bench_golden.derive()`：从 case 原文、材料字节与 `references/` 规则独立推导期望值 | 每项带 `source.locator` + 逐字 `quote`；`summary.quote_hit_rate` 应为 1.0 |
+| `diff_report.md` | `bench_diff.render_diff()`：读回落盘产物逐类对照，并复算 0/1/2 与 aggregate | §2 总览、§3 逐项、§4 评分表自洽、§9 偏离项 |
+| `version_history.md` | `bench_assets.render_version()`：静态 7 版 v0.0.1→v1.1.0 + 兼容承诺 + 4 种回退 + 运行时段 | 无时间戳（确定性）；回退方式可直接照做 |
+| `run.log` | build 全程真实事件（时间、耗时、阶段计数、探针退出码、degradations/errors 计数） | 唯一带时间戳的资产；末行含 `exit_code=0` 与资产计数 |
+| `self_check.json` | `bench_diff.render_self_check()`：回读 10 件产物做 16 项断言 | `ok`、`checks_passed/checks_total`、`failed[]`、降级输入子进程回执 |
+
+**金标准不是「抄一遍产物」**：quote 从输入字节取、locator 用段落索引重新定位、0/1/2 用 rubric 的
+`key_terms` 重算、aggregate 从题表重算；`diff_report.md` 因此是真实对照而不是恒真报告。
+**失败关闭**：资产层任何异常只写一条 `degradations`，五件主产物与退出码 0 不受影响；空输入/坏 JSON
+两种降级场景由 `self_check.json` 在**同一次 finalize 内**用子进程真跑复核（`degraded_input_probe`、
+`partial_result_first`），不是声称。**确定性**：除 `run.log` 外的 4 件资产不含时间戳，同一输入重跑可逐字节比较。
+`result.json` 只新增 5 个汇总键（`golden_standard` / `diff_report` / `version_history` / `run_log` /
+`self_check`），原有字段与 `output_contract` 回填一个不少。
