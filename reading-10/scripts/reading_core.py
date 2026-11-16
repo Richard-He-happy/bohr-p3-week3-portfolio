@@ -11,7 +11,7 @@ import hashlib, json, os, re, shutil, subprocess, sys, time, traceback, zipfile,
 from html import unescape
 from pathlib import Path
 
-VER, TITLE, T_START = "1.0.0", "reading-bench-forge", time.time()
+VER, TITLE, T_START = "1.1.0", "reading-bench-forge", time.time()
 KINDS = ("extraction", "numeric", "method", "definition", "conflict", "coverage", "table", "other")
 TEXT_EXTS = {".md", ".txt", ".text", ".csv", ".tsv", ".json", ".jsonl", ".html", ".htm", ".xml", ".tex",
         ".yaml", ".yml", ".rst", ".log", ".py", ".bib"}
