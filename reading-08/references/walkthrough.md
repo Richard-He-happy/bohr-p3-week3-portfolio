@@ -51,7 +51,7 @@ The fitted mass was m = 2.5 g and the bath was held at T = 300 K.
 ## 二、跑一次
 
 ```bash
-python -B scripts/run_audit.py --input /input --output /app/output
+python3 -B scripts/run_audit.py --input /input --output /app/output
 ```
 
 进程返回码恒为 0。输出目录先出现 partial 版 `result.json`，结束时被终版覆盖；同时生成 `formulas.tex`、`symbol_table.csv`、`verification.md`。
@@ -93,11 +93,11 @@ Conversion reached 87 % after 40 h on stream.
 ## 五、复跑与自查命令
 
 ```bash
-python -B scripts/run_audit.py --help
-python -B scripts/run_audit.py --input /input --output /tmp/run1
-python -B scripts/run_audit.py --input /input --output /tmp/run2
+python3 -B scripts/run_audit.py --help
+python3 -B scripts/run_audit.py --input /input --output /tmp/run1
+python3 -B scripts/run_audit.py --input /input --output /tmp/run2
 diff /tmp/run1/formulas.tex /tmp/run2/formulas.tex
-python -B scripts/run_audit.py --input /tmp/empty-input --output /tmp/run3
+python3 -B scripts/run_audit.py --input /tmp/empty-input --output /tmp/run3
 ```
 
 第二次运行与第一次的 `formulas.tex` 应逐字节一致（无随机性）；空目录输入仍应返回 0 并给出合法 partial。
