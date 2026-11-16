@@ -19,6 +19,20 @@ sys.path.insert(0, str(HERE))
 import evidence_kit as K  # noqa: E402
 import result_packaging as R  # noqa: E402
 
+try:  # optional additive layer: five verifiable assets (scripts/claim_assets.py)
+    import claim_assets as A
+except Exception:  # pragma: no cover - the core audit must work without the asset layer
+    A = None
+
+
+def _alog(event, message, **fields):
+    """Best-effort run.log hook for the optional asset layer; never affects the audit."""
+    if A is not None:
+        try:
+            A.log(event, message, **fields)
+        except Exception:
+            pass
+
 VERSION = "1.0.0"
 START = time.time()
 LEVELS = ("supported", "partially_supported", "contradicted", "insufficient_evidence")
@@ -290,6 +304,7 @@ def execute(args):
     out.mkdir(parents=True, exist_ok=True)
     res = empty_result("unknown", "partial")
     save_result(out, res)
+    _alog("stage", "partial result written", output=str(out))
     try:
         case, case_path = read_case(inp)
         nested = case.get("input") if isinstance(case.get("input"), dict) else {}
@@ -297,6 +312,8 @@ def execute(args):
                    or Path(case_path or "unknown").stem)
         res = empty_result("%s" % case_id, "partial", case.get("output_contract"))
         res["runtime"].update({"input_dir": str(inp), "case_file": case_path})
+        _alog("input", "case file read", case_file=case_path, case_id=case_id,
+              parse_error=bool(case.get("_parse_error")))
         if case.get("_parse_error"):
             res["errors"].append({"stage": "input", "issue": case["_parse_error"],
                                   "action": "continue"})
@@ -310,11 +327,15 @@ def execute(args):
         res["sources"], res["gaps"] = sources, claim_gaps + gaps
         res["degradations"] = res["degradations"] + degradations
         res["result"]["corpus_units"] = len(units)
+        _alog("corpus", "claims and corpus scanned", claims=len(claims),
+              origin=claims_origin, sources=len(sources), units=len(units),
+              degradations=len(res["degradations"]))
         if not units:
             res["pending_human"].append({"action": "提供可读原文",
                                          "reason": "input 下无可解析的原文段落"})
         if not claims:
             res["status"] = "input_error"
+            _alog("claims", "no claims found", status="input_error")
             res["errors"].append({"stage": "claims", "issue": "no claims_to_verify found",
                                   "detail": "looked for claims-to-verify.json and case.json claims keys"})
             res["pending_human"].append({"action": "补充待核验论断清单",
@@ -329,7 +350,11 @@ def execute(args):
                                             "detail": "remaining claims -> insufficient_evidence"})
                 break
             try:
-                verifications.append(audit_claim(claim, units))
+                entry = audit_claim(claim, units)
+                verifications.append(entry)
+                _alog("claim", "verified", claim_id=entry["claim_id"],
+                      verdict=entry["verdict"],
+                      subclaims=len(entry.get("sub_claims") or []))
             except Exception as exc:
                 res["errors"].append({"stage": "claim", "claim_id": claim["claim_id"],
                                       "issue": "verification_failed",
@@ -367,6 +392,9 @@ def execute(args):
                                               if item.startswith("conflicting") else "")
                                          for item in sub.get("limitations", [])]
         res["self_check"] = R.audit_structure(claims, verifications, units, coverage, LEVELS)
+        _alog("self_check", "structure audit", passed=res["self_check"]["passed"],
+              checks=len(res["self_check"].get("checks") or []),
+              issues=len(res["self_check"].get("issues") or []))
         if not res["self_check"]["passed"]:
             res["degradations"].append({"stage": "self_check", "issue": "structure_mismatch",
                                         "detail": "; ".join(res["self_check"]["issues"])[:400]})
@@ -380,12 +408,14 @@ def execute(args):
                          else "ok")
         save_result(out, res)
         K.render_report(out, res)
+        _alog("report", "verification_report.md written")
         return res
     except Exception as exc:
         res["status"] = "partial" if res.get("errors") else "input_error"
         res["errors"].append({"stage": "run", "issue": "unhandled",
                               "detail": "%s: %s" % (type(exc).__name__, exc),
                               "trace": traceback.format_exc(limit=3)})
+        _alog("error", "unhandled exception", detail="%s: %s" % (type(exc).__name__, exc))
         save_result(out, res)
         return res
 
@@ -403,18 +433,38 @@ def cli(argv=None):
     parser.add_argument("--max-seconds", dest="max_seconds", type=float, default=780.0,
                         help="soft wall-clock budget before remaining claims are left pending")
     args = parser.parse_args(argv)
+    out = Path(args.output)
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    if A is not None:
+        try:
+            A.start(argv_list, args.input, str(out))
+        except Exception:
+            pass
     try:
         result = execute(args)
     except Exception as exc:
-        out = Path(args.output)
         out.mkdir(parents=True, exist_ok=True)
         result = empty_result("unknown", "input_error")
         result["errors"].append({"stage": "main", "issue": "fatal", "detail": str(exc)})
         save_result(out, result)
+    if A is not None:
+        try:
+            A.attach(out, result, args.input, argv_list)   # five verifiable assets
+        except Exception:
+            pass
+        try:
+            save_result(out, result)                       # persist verifiable_assets
+        except Exception:
+            pass
     cov = result.get("result", {}).get("coverage", {})
     print("status=%s claims=%s subclaims=%s self_check=%s -> %s"
           % (result.get("status"), cov.get("claims_requested"), cov.get("split_subclaims"),
-             (result.get("self_check") or {}).get("passed"), Path(args.output) / "result.json"))
+             (result.get("self_check") or {}).get("passed"), out / "result.json"))
+    if A is not None:
+        try:
+            A.settle(out, result)                          # exit line + final result.json
+        except Exception:
+            pass
     return 0
 
 
