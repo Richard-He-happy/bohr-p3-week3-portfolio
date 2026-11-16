@@ -13,6 +13,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 import kernel as KN
+import assets_ext as AX
 from kernel import canon, trim, jstr, dhash
 from journal import (STEPS, SET5FILES, ADDFIELDS, MUST_KEYS, GOOD_T, MID_T, KVER, AVER,
                      boot, trace, render_log, release_log, audit_json, seal, fallback_assets)
@@ -249,7 +250,8 @@ def compare_gold(state, brief, items, ANCH, docs, grid, tally, revs, GOLD, REPLA
         L.append("**无未解释偏差**：逐题 rubric/期望要点/锚点齐备；source 类 quote 全部逐字命中；"
                  "评分可由锚点复算；缺失项仅限输入未提供的对象。")
     L += ["", "> 只陈述本轮实际产物与可复算关系；不含基准分、提升倍数或外部排名。", ""]
-    return "\n".join(L), {"deviations": dev, "missing": miss, "covered": cov,
+    return "\n".join(L), {"deviations": dev, "missing": miss,
+                          "covered": [r[0] for r in rows if r[6] == "一致"],
                           "checked_items": len(items) * 4, "recompute": REPLAY}
 
 
@@ -262,50 +264,100 @@ def build_assets(out, brief, state, items, ANCH, docs, grid, tally, revs, FAULTS
     state.setdefault("errors", FAULTS)
     trace("golden_standard", items=len(items), anchors=len(ANCH))
     GOLD = make_gold(brief, state, items, ANCH, docs)
+    CO = AX.contract_gold(brief, state, items, ANCH, docs, grid, payload, out)
+    GOLD["contract_expected"] = CO
     gt = jstr(GOLD) + "\n"
     (out / "golden_standard.json").write_text(gt, encoding="utf-8")
 
     REPLAY = replay(out, ANCH, grid)
-    trace("diff_report", recompute_checked=REPLAY["checked"], mismatch=len(REPLAY["mismatch"]))
     dt, DIFF = compare_gold(state, brief, items, ANCH, docs, grid, tally, revs, GOLD, REPLAY, FAULTS, DEGRADED, HOLD, stable)
     (out / "diff_report.md").write_text(dt, encoding="utf-8")
-
-    trace("version_history")
-    vt = release_log(GOLD, DIFF)
-    (out / "version_history.md").write_text(vt, encoding="utf-8")
-
+    trace("diff_report", recompute_checked=REPLAY["checked"], mismatch=len(REPLAY["mismatch"]))
+    # parseable placeholders so the early audit already finds all five asset files
     (out / "self_check.json").write_text(jstr({"schema": "self-check/v1", "state": "seed",
                                              "checks": [], "summary": {}}) + "\n", encoding="utf-8")
     trace("self_check")
+    vt = AX.release_history(GOLD, DIFF, state)
+    (out / "version_history.md").write_text(vt, encoding="utf-8")
+    trace("version_history", releases=len(AX.VERSIONS))
     trace("run_log", lines=len(STEPS))
     lt = render_log(state, FAULTS, DEGRADED, HOLD, state.get("status") or "partial")
     (out / "run.log").write_text(lt, encoding="utf-8")
 
-    audit_res = audit_json(out, brief, state, items, ANCH, GOLD, DIFF, REPLAY, grid, stable, payload)
+    refs = {
+        "golden_standard": dict(AX.file_ref(out / "golden_standard.json", "golden_standard.json"),
+                                schema=GOLD["schema"],
+                                task_count=GOLD["task_count"], rubric_point_count=GOLD["rubric_point_count"],
+                                expected_point_count=GOLD["expected_point_count"],
+                                anchor_count=GOLD["anchor_count"],
+                                quote_verbatim_rate=GOLD["completeness"]["quote_verbatim_rate"],
+                                contract_expected={"contract": len(CO.get("contract_items") or []),
+                                                   "workorder": len(CO.get("workorder_items") or []),
+                                                   "deliverable": len(CO.get("deliverable_items") or []),
+                                                   "quoted": len([x for x in (CO.get("contract_items") or [])
+                                                                  + (CO.get("deliverable_items") or [])
+                                                                  if x.get("quote_verbatim")])}),
+        "diff_report": dict(AX.file_ref(out / "diff_report.md", "diff_report.md"),
+                            deviations=DIFF["deviations"], missing=DIFF["missing"],
+                            covered_tasks=DIFF["covered"], contract={},
+                            recompute={"checked": REPLAY["checked"], "mismatch": REPLAY["mismatch"]}),
+        "version_history": dict(AX.file_ref(out / "version_history.md", "version_history.md"),
+                                versions=list(AX.VERSIONS), current=AX.CURRENT,
+                                anchor_version=AVER, rollback="file-level（§3）"),
+        "run_log": AX.run_log_ref(out),
+        "self_check": {"path": "self_check.json", "pending": True},
+    }
+    audit_res = audit_json(out, brief, state, items, ANCH, GOLD, DIFF, REPLAY, grid, stable, payload,
+                           published=refs)
+    audit_res["checks"] += AX.extra_checks(out, state, items, ANCH, GOLD, CO, payload, grid, brief)
+    audit_res = AX.finalize_summary(audit_res)
     st = jstr(audit_res) + "\n"
     (out / "self_check.json").write_text(st, encoding="utf-8")
+    refs["self_check"] = dict(AX.file_ref(out / "self_check.json", "self_check.json"),
+                              summary=audit_res["summary"], checks=len(audit_res["checks"]),
+                              artifacts=list(SET5FILES), run_log="run.log",
+                              groups=audit_res["summary"]["groups"])
+    trace("self_check", status="ok", checks=len(audit_res["checks"]), verdict=audit_res["summary"]["verdict"])
+
+    # contract / deliverable comparison runs once every asset file is final
+    csec, CSUM = AX.contract_diff(out, CO, payload, items, ANCH, grid)
+    DIFF["contract"] = CSUM
+    if "## 3 覆盖" in dt:
+        dt = dt.replace("## 3 覆盖", csec + "## 3 覆盖", 1)
+    else:
+        dt = dt + csec
+    (out / "diff_report.md").write_text(dt, encoding="utf-8")
+    refs["diff_report"].update(AX.file_ref(out / "diff_report.md", "diff_report.md"))
+    refs["diff_report"].update(
+        contract={k: CSUM.get(k) for k in ("total", "met", "deviation", "missing")},
+        verdict="no_unexplained_deviation"
+        if not DIFF["deviations"] and not DIFF["missing"] and not CSUM.get("missing") else
+        ("high_severity_deviation"
+         if ([x for x in DIFF["deviations"] if x.get("sev") == "high"] or CSUM.get("missing"))
+         else "explained_deviations"))
+    trace("contract_diff", items=CSUM.get("total"), met=CSUM.get("met"),
+          deviation=CSUM.get("deviation"), missing=CSUM.get("missing"))
+
+    # release notes carry the real audit verdict and the contract comparison
+    vt = AX.release_history(GOLD, DIFF, state, extra={"self_check": refs["self_check"]})
+    (out / "version_history.md").write_text(vt, encoding="utf-8")
+    refs["version_history"].update(AX.file_ref(out / "version_history.md", "version_history.md"))
+    refs["version_history"].update(versions=list(AX.VERSIONS), current=AX.CURRENT,
+                                   anchor_version=AVER, rollback="file-level（§3）")
+    # final run.log render: every step above is now part of the real event stream
+    lt = render_log(state, FAULTS, DEGRADED, HOLD, state.get("status") or "partial")
+    (out / "run.log").write_text(lt, encoding="utf-8")
     try:
         with (out / "run.log").open("a", encoding="utf-8") as f:
-            f.write("[self_check] verdict=%s pass=%d fail=%d（post 另补 SC-19/20）\n"
-                    % (audit_res["summary"]["verdict"], audit_res["summary"]["pass"], audit_res["summary"]["fail"]))
+            f.write("[assets] five files written: golden %d B / diff %d B / version %d B / self_check %d B"
+                    "（run.log 由 seal 追加 [verify]/[exit] 并在 result.json 刷新指针）\n"
+                    % (refs["golden_standard"].get("bytes", 0), refs["diff_report"].get("bytes", 0),
+                       refs["version_history"].get("bytes", 0), refs["self_check"].get("bytes", 0)))
+            f.write("[self_check] verdict=%s pass=%d fail=%d（seal 另补 SC-19/20 与资产指针校验）\n"
+                    % (audit_res["summary"]["verdict"], audit_res["summary"]["pass"],
+                       audit_res["summary"]["fail"]))
     except Exception:
         pass
-    return {"golden_standard": {"path": "golden_standard.json", "schema": GOLD["schema"], "sha256": dhash(gt),
-                                "task_count": GOLD["task_count"], "rubric_point_count": GOLD["rubric_point_count"],
-                                "expected_point_count": GOLD["expected_point_count"],
-                                "anchor_count": GOLD["anchor_count"],
-                                "quote_verbatim_rate": GOLD["completeness"]["quote_verbatim_rate"]},
-            "diff_report": {"path": "diff_report.md", "sha256": dhash(dt),
-                            "deviations": DIFF["deviations"], "missing": DIFF["missing"],
-                            "covered_tasks": DIFF["covered"],
-                            "verdict": "no_unexplained_deviation"
-                            if not DIFF["deviations"] and not DIFF["missing"] else
-                            ("high_severity_deviation" if [x for x in DIFF["deviations"] if x["sev"] == "high"]
-                             else "explained_deviations"),
-                            "recompute": {"checked": REPLAY["checked"], "mismatch": REPLAY["mismatch"]}},
-            "version_history": {"path": "version_history.md", "sha256": dhash(vt),
-                                "versions": ["v0.0.0", "v1.0.0", "v1.1.0"], "current": "v1.1.0",
-                                "anchor_version": AVER, "rollback": "file-level（§4）"},
-            "self_check": {"path": "self_check.json", "sha256": dhash(st), "summary": audit_res["summary"],
-                           "checks": len(audit_res["checks"]), "artifacts": list(SET5FILES), "run_log": "run.log"}}
+    refs["run_log"] = AX.run_log_ref(out)
+    return refs
 
