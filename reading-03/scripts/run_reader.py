@@ -563,12 +563,26 @@ def main(argv=None):
         reader_kit.save_json(out / "result.json", payload)
     except Exception as e:  # noqa: BLE001
         TRACE["errors"].append({"stage": "finalize", "error": f"{type(e).__name__}: {e}"})
+    assets_note = "assets: 0/5"
+    try:  # five verifiable assets: additive only, failures degrade, exit code still 0
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("reader03_assets", Path(__file__).resolve().parent / "assets.py")
+        _mod = _ilu.module_from_spec(_spec)  # type: ignore[arg-type]
+        _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+        _done = _mod.finalize(inp, out, stage="build")
+        assets_note = "assets: %d/5" % len(_done.get("assets") or [])
+    except Exception as e:  # noqa: BLE001
+        TRACE["degradations"].append({"item": "assets", "reason": f"{type(e).__name__}: {e}", "impact": "五件资产未生成"})
+        try:
+            reader_kit.save_json(out / "result.json", payload)
+        except Exception:  # noqa: BLE001
+            pass
     if not args.quiet:
         c = payload.get("counts", {})
         print(f"[source-bound-paper-qa {PKG_VERSION}] case={payload.get('case_id')} status={payload.get('status')} "
               f"q={c.get('questions')} subq={c.get('sub_questions')} claims={c.get('claims')} "
               f"quote_hit={c.get('quote_hit_rate')} num_trace={c.get('numeric_trace_rate')} "
-              f"audit={rep.get('ok')} fails={rep.get('fails')}")
+              f"audit={rep.get('ok')} fails={rep.get('fails')} | {assets_note}")
     return 0
 
 
