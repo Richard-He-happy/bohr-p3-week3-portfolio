@@ -23,7 +23,7 @@ python3 scripts/pipeline.py --stage=finalize --input=/input --output=/app/output
 | 阶段 | 结果 |
 |---|---|
 | `prepare` | 占位 `output/result.json`（每个字段一个槽）、`work/corpus_index.json`、`work/draft.json` |
-| `finalize` | 最终 `output/result.json` + 供抽查的 `output/fields.csv` |
+| `finalize` | 最终 `output/result.json` + 供抽查的 `output/fields.csv` + 五件可核验资产（见 §十六） |
 | `run` | 等价 finalize；无草稿时全部槽位为 `extraction_failed` 并写明原因 |
 
 脚本只用 Python 3.8+ 标准库，不依赖当前目录；`--draft 路径` 可换草稿位置。预算 900 秒 /
@@ -35,7 +35,9 @@ python3 scripts/pipeline.py --stage=finalize --input=/input --output=/app/output
 `result.json` 要让 `output_contract` 里的每个键原样存在；无值的键保留为 `null` 或 `[]`。
 契约键之外另加 11 个封装键：`case_id`、`status`、`result`、`claims`、`sources`、
 `uncertainties`、`pending_human`、`errors`、`changes`、`degradations`、`runtime`，含义与
-结构见 `references/field-ledger.md`。任何异常只在 JSON 里记录，进程退出码始终为 0。
+结构见 `references/field-ledger.md`。`finalize` 另追加 5 个可核验资产摘要键
+（`golden_standard`、`diff_report`、`version_history`、`run_log`、`self_check`），只增不改，
+用法见 §十六。任何异常只在 JSON 里记录，进程退出码始终为 0。
 
 ## 三、输入与中间文件
 
@@ -146,6 +148,7 @@ python3 scripts/pipeline.py --stage=finalize --input=/input --output=/app/output
 5. `condition_not_in_quote` 要么重读修正，要么转成不确定性。
 6. `output_contract` 全部键仍在；`fields.csv` 每字段一行。
 7. `errors`、`degradations`、`pending_human` 与实际情况一致。
+8. 五件可核验资产非空，`self_check.json` 的 `pass` 为 true（空输入/坏 JSON 兜底单独看 C08/C09）。
 
 ## 十四、合成示例（虚构数据，仅演示接口）
 
@@ -162,6 +165,7 @@ python3 scripts/pipeline.py --stage=finalize --input=/input --output=/app/output
 | `SKILL.md` | 入口：流程、契约、规则、检查项 |
 | `scripts/pipeline.py` | 两段式驱动：语料索引、占位槽、封装、CSV、恒退出 0 |
 | `scripts/checks.py` | 校验闸门：引文检索、数字/单位覆盖、结论分层、网格、PDF 文本、条件绑定 |
+| `scripts/assets.py` | 五件可核验资产的生成器（金标准/差异/版本/日志/自检），finalize 末尾调用，失败不阻断主流程 |
 | `references/field-ledger.md` | 记录契约、条件槽位、单位表、来源顺序、封装字段 |
 | `references/state-and-claim-codebook.md` | 状态判定、引文规则、结论分层、冲突与人工接管 |
 | `references/grid-evidence-and-pdf.md` | 定位格式、表格修复、图与 PDF 质量、回归流程 |
@@ -170,3 +174,25 @@ python3 scripts/pipeline.py --stage=finalize --input=/input --output=/app/output
 不联网；版本 1.0.0。扩展点：单位改 `checks.py` 的 `UNIT_LEXICON`，模糊/限制/强结论词改同文件
 三个词表，字段模板改 `references/field-ledger.md`。改完脚本至少重跑 `--help`、空输入、坏
 JSON 三种情况（退出码 0 且 partial 合法），再跑合成示例确认 coverage 自洽。
+
+## 十六、五件可核验资产（本次 patch 增量）
+
+`finalize`（含 `--stage=run`）在写 `result.json` 与 `fields.csv` 的同时，向输出目录额外落五个
+文件，并在 `result.json` 顶层增加同名摘要键（`path`、`bytes` 与关键计数）。它们只增不改：原有
+`output_contract` 键一个不少，命令与参数不变；`scripts/assets.py` 导入失败时 `pipeline.py` 自动
+跳过（`A = None`），主流程照常交付。
+
+| 资产 | 内容 | 怎么核验 |
+|---|---|---|
+| `golden_standard.json` | 自建金标准：按 `target-fields` 逐字段写“应该交出什么”——期望状态、值/单位/统计量、实验条件、对照、locator、逐字 quote，另含 `row_contract` 义务与 `counts`。由脚本对材料做独立词面重扫生成，**不是组织方隐藏答案**（`provenance.is_organizer_key=false`） | 取 `fields[].evidence.locator` 打开材料，搜索 `quote` 应逐字命中；`counts.quote_verbatim` 给命中率 |
+| `diff_report.md` | 实际产物 vs 金标准逐项对照：contract / envelope / accounting / field 四组，每行给 verdict（match / missing / deviation / needs_review）与原因，末尾列剩余缺口与复核步骤 | 先看第 1 节总览计数，再按第 6 节偏差清单回读对应原文 |
+| `version_history.md` | 静态记录 v0 → v1.0.0 的演进、本次 patch 的增量改动与回退方式；运行时在末尾追加“本次运行”段（命令、case_id、状态、耗时、coverage） | 按第 3 节回退；按第 5 节复跑 |
+| `run.log` | 真实执行日志：每次命令的 invocation 边界、阶段、耗时、退出码、降级、异常，逐行追加 | 看 `[exit]` 行确认退出码 0；看 `[degrade]` / `[error]` 行核对降级与异常 |
+| `self_check.json` | 机器自检回执 C01–C13：契约键完整、封装键、字段行完整唯一、coverage 计数自洽、quote 逐字命中率、数字一致性、五资产非空、空输入/坏 JSON 子进程实跑兜底、退出码恒 0、状态诚实、五字段回填、包体预算 | 先看 `pass / passed / total` 与 `checks[].actual`；`fallback_tests` 是兜底实跑证据 |
+
+复跑或单独重算资产：重跑 `finalize` 即可覆盖五件；只读材料与 `result.json`，不联网、不依赖
+当前目录，任一资产生成失败只记 `errors` 并降级，不影响退出码 0。空输入或坏 JSON 时五件资产仍
+按最小合法结构落盘，`diff_report.md` 会如实写“无字段可对照”而不是伪造匹配。
+
+（注：`hashlib`、`subprocess`、`tempfile`、`shutil`、`os` 均为标准库；自检子进程仅在
+`LEDGER_ASSET_PROBE=1` 的递归保护下不重复触发。）
