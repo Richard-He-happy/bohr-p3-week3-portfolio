@@ -25,7 +25,7 @@ version: 1.0.0
 ## 2. 怎么调用
 
 ```bash
-python -B <skill>/scripts/route_figure.py --input <in> --output <out> --work <tmp>
+python3 -B <skill>/scripts/route_figure.py --input <in> --output <out> --work <tmp>
 ```
 
 - `<in>`：放 `case.json` 与材料，允许子目录混放；不要求固定的文件名集合。
