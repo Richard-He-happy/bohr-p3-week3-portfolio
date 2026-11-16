@@ -188,6 +188,7 @@ latin typeface 不硬编码（`CI-11`），硬编码 RGB 必须落在主题色�
 | `scripts/slide_engine.py` | 正文抽取、分句与页计划、OOXML 发射、deck 基础检查 |
 | `scripts/template_kit.py` | 模板解剖、16 项合规、导出/渲染检查、保护部件回退、内置骨架包 |
 | `scripts/audit_docs.py` | `run.log`、`page_diff.md`、`version_history.md` 与回退记录 |
+| `scripts/page_assets.py` | 页级资产：`page_golden.json`、`template_check.json`、`self_check.json`，给 `page_diff`/`version_history`/`export_check`/`format_compliance` 追加页级核验（build 收尾自动写） |
 | `scripts/regression_check.py` | 一键回归（正例 + 三条降级路径断言） |
 | `references/asset_contract.md` | 审计资产与 `result.json` 字段字典 |
 
