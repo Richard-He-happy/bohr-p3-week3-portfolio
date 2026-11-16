@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 import evidence
 from evidence import *
-rend15 = [('v0.0.0 骨架(未随包)', '起手写 partial result.json, 回填 output_contract, 异常进 errors, 退出码恒 0', '先满足运行契约, 中断不空产出', '据构建指南 §3/§11; 未提供 v0 包, 无法逐文件核验'), ('v1.0.0 成稿(baseline_v1.zip, 6 文件/76100 B)', '七步闭环; 三元锚点(PDF 页+印刷页+字符偏移); 批注即时 flush 与跨会话合并; 离线 HTML; 导出记录', '一次运行走完闭环, 结论可回原文', 'pipeline.py --help 退出码 0; 最小案例出 6 个主产物'), ('v2.0.0 可核验资产增补(本次)', '新增 5 件资产 + result.json 4 个摘要字段(原契约字段全保留); 新增 viewer.py 等价入口与 audit.py; finish() 加渲染+增补钩子; step() 记 t_s; run() 透出 _tasks', '补齐 rubric 的可核验性/完整性/生态贡献', '见 §2 差异表; 判定见 diff_report.md 与 self_check.json')]
-cont19 = {'SKILL.md': '修改', 'scripts/pipeline.py': '修改', 'scripts/viewer.py': '未改', 'references/result-and-anchor-contract.md': '修改', 'references/passage-anchoring-rules.md': '未改', 'references/inline_client.html': '未改'}
+rend15 = [('v0.0.0 骨架(未随包)', '起手写 partial result.json, 回填 output_contract, 异常进 errors, 退出码恒 0', '先满足运行契约, 中断不空产出', '据构建指南; 未提供 v0 包, 无法逐文件核验'), ('v0.9.0 预交付(六件主产物)', '七步闭环; 三元锚点(PDF 页+印刷页+字符偏移); 批注即时 flush 与跨会话合并; 离线 HTML; 导出记录', '一次运行走完闭环, 结论可回原文', 'pipeline.py --help 退出码 0; 最小案例出 6 件主产物'), ('v1.0.0 当前(五件可核验资产)', '在 v0.9.0 上增补 golden_standard/diff_report/version_history/run.log/self_check 与 evidence/audit 两层; result.json 增加五件资产摘要(原契约键全保留); viewer.py 提供等价回看入口', '补齐 rubric 的可核验性/完整性/生态贡献', '§5 本次运行段 + self_check.json C1–C12; diff_report.md 逐项对照')]
+cont19 = {'SKILL.md': '说明、调用与资产核验', 'GITHUB_URL.txt': '公开仓库链接', 'scripts/pipeline.py': '主流程入口', 'scripts/viewer.py': '定位/问答/渲染/回看', 'scripts/evidence.py': '证据层: 期望与判定', 'scripts/audit.py': '审计层: 五件资产', 'references/result-and-anchor-contract.md': '字段级契约', 'references/passage-anchoring-rules.md': '坐标与定位规则', 'references/inline_client.html': '单文件客户端模板'}
 
 def cont118(fram38, stri61, link41, pin103, surf53, matc108, zone107):
     meas100 = fram38['res'].get('runtime') or {}
@@ -42,8 +42,9 @@ def merg92(poin87, span101):
     view40 = rank47(toke88, None)
     if not isinstance(view40, dict):
         view40 = {'case_id': 'UNKNOWN-CASE', 'status': 'input_error', 'result': None, 'claims': [], 'uncertainties': [], 'sources': [], 'pending_human': [], 'degradations': [], 'changes': [], 'errors': [{'kind': 'result_json_rebuild', 'detail': 'result.json 不可解析, 按落盘摘要重建'}]}
-    for stre69 in ('golden_standard', 'diff_report', 'version_history', 'self_check'):
-        view40[stre69] = span101[stre69]
+    for stre69 in ('golden_standard', 'diff_report', 'version_history', 'run_log', 'self_check'):
+        if stre69 in span101:
+            view40[stre69] = span101[stre69]
     if isinstance(view40.get('result'), dict):
         view40['result']['verification_assets'] = meas01
         view40['result']['verdicts'] = span101['diff_report']['verdict_counts']
@@ -64,14 +65,15 @@ def page44(fram38, stri61):
     return {'schema': 'margin-reader/diff@1', 'case_id': fram38['case_id'], 'generated_at': now(), 'verdict': 'mismatch' if shee34['missing'] or shee34['deviation'] else 'match' if shee34['pass'] else 'unknown', 'verdict_counts': shee34, 'pass_rate': round(shee34['pass'] / slot109, 4), 'rows': anch99}
 
 def pass119(fram38, surf53):
-    mark17 = ['# 版本历史 · margin-reader', '', '- 当前版本 **%s** · 本次运行 `%s` · 生成 %s' % (term13, fram38['case_id'], now()), '- 由 audit.py 运行时生成: 谱系为静态事实, 文件哈希为本次实测。', '', '## 1. 谱系', '', '| 版本 | 变更 | 原因 | 核验 |', '|---|---|---|---|']
+    meas100 = fram38['res'].get('runtime') or {}
+    mark17 = ['# 版本历史 · margin-reader', '', '- 当前版本 **%s** · 本次运行 `%s` · 生成 %s' % (term13, fram38['case_id'], now()), '- 谱系为静态事实, 文件字节与 sha256 为本次实测; §5 是本次运行追加段。', '', '## 1. 谱系(v0 → v1.0.0)', '', '| 版本 | 变更 | 原因 | 核验 |', '|---|---|---|---|']
     mark17 += ['| %s | %s | %s | %s |' % tuple((grad30(targ120, 300) for targ120 in tile96)) for tile96 in rend15]
-    mark17 += ['', '## 2. v1 → v2 文件差异(实测)', '', '| 文件 | 状态 | 字节 | sha256(前16) |', '|---|---|---|---|']
+    mark17 += ['', '## 2. 当前包文件清单(实测)', '', '| 文件 | 角色 | 字节 | sha256(前16) |', '|---|---|---|---|']
     rang55 = sorted((targ120.relative_to(matc09).as_posix() for targ120 in matc09.rglob('*') if targ120.is_file()))
     for ledg57 in rang55:
         spli93 = matc09 / ledg57
-        mark17.append('| `%s` | %s | %s | %s |' % (ledg57, cont19.get(ledg57, '新增'), spli93.stat().st_size, (draf86(spli93) or '-')[:16]))
-    mark17 += ['', '- 包合计 %d 文件 / %d B(限额 10 文件 / 120KB)' % (len(rang55), sum(((matc09 / targ120).stat().st_size for targ120 in rang55))), '', '## 3. 回退方式(v2 → v1)', '', '1. `rm -f scripts/viewer.py scripts/audit.py`;', '2. `scripts/pipeline.py`: 还原 `V = "1.0.0"`; 删 `step()` 内 `d["t_s"]`; 删 `finish()` 内 render 与 `import augment` 两个 try 块; 删 `c["_tasks"] = tasks`; 删无材料分支的 4 个空结构 jdump;', '3. `SKILL.md` 还原 `version: 1.0.0`, 删 §4.1 与 §13 新增行; `references/result-and-anchor-contract.md` 删 §8;', '4. result.json 的 4 个新键可留(无害)或删: `[d.pop(k, None) for k in ("golden_standard","diff_report","version_history","self_check")]`;', '5. 校验 `python3 -B scripts/pipeline.py --help` 退出码 0; 最小案例仍出 6 个主产物、不再出 5 件资产。', '', '回退不触及主产物与证据字段: v1 的 result/claims/uncertainties/sources 结构在 v2 中原样保留。', '', '## 4. 兼容与维护', '', '- 格式只增不改名(`anchors@1`/`qa@1`/`state@1` 不变, 新增 `golden@1`/`diff@1`/`selfcheck@1`), 入口不变; 改判定须同步 `references/result-and-anchor-contract.md` §8 与 `augment.evaluate`, 新增资产须同步 `ART5`/C7。', '']
+        mark17.append('| `%s` | %s | %s | %s |' % (ledg57, cont19.get(ledg57, '运行/说明文件'), spli93.stat().st_size, (draf86(spli93) or '-')[:16]))
+    mark17 += ['', '- 包合计 %d 文件 / %d B(本包预算 10 文件 / 180KB)' % (len(rang55), sum(((matc09 / targ120).stat().st_size for targ120 in rang55))), '', '## 3. 回退方式(v1.0.0 → v0.9.0)', '', '1. 备份当前包: `cp -r <包根> <包根>.bak`; 并保留本节 §2 的 sha256 清单, 回退后逐文件对照;', '2. `scripts/pipeline.py`: 删 `clip51()` 里 `import audit as A` 与 `A.unit56(stag85, wind32, zone107)` 所在 try 块(保留 `render_client` 调用与退出码 0 逻辑);', '3. 删除 `scripts/audit.py` 与 `scripts/evidence.py`;', '4. `SKILL.md`: `version` 改回 v0.9.0, 删 §4.1 五资产小节与 §11 文件清单里对应的两行;', '5. 校验 `python3 -B scripts/pipeline.py --help` 退出码 0; 最小案例仍出 6 件主产物、不再出五件资产; result.json 里多出的资产摘要键可留(无害)或删。', '', '回退只影响资产层: 主产物(reader/* 与 reading_record.md)、契约字段、claims/uncertainties 结构在回退前后一致。', '', '## 4. 兼容与维护', '', '- 数据格式只增不改名: `anchors@1`/`qa@1`/`state@1` 不变, 资产 schema 为 `golden@1`/`diff@1`/`runlog@1`/`selfcheck@1`; 入口、参数、退出码不变;', '- 每次运行覆盖写五件资产(不追加), 同一输入两次运行除时间戳/耗时/sha256 外结构一致;', '- 改判定须同步 `references/result-and-anchor-contract.md` §8 与 `evidence.wind32`; 新增资产须同步 `evidence.meas01` 与 `audit.text104` 的 C7。', '', '## 5. 本次运行(运行时追加)', '', '| 项 | 值 |', '|---|---|', '| run_id | `%s` |' % ('%s@%s' % (fram38['case_id'], meas100.get('started_at') or 'NA')), '| case_id | `%s` |' % fram38['case_id'], '| status | `%s` |' % fram38['status'], '| 命令 | `%s` |' % grad30(' '.join(sys.argv), 300), '| 起止/耗时 | %s → %s / %s 秒 |' % (meas100.get('started_at'), meas100.get('finished_at'), meas100.get('elapsed_s')), '| 退出码 | 0(主入口恒为 0) |', '| python / platform | %s / %s |' % (sys.version.split()[0], sys.platform), '| 五件资产 | golden_standard.json · diff_report.md · 本文件 · run.log 与 self_check.json 随后由同一进程写出 |', '| 主产物 | 6 件: reader/index.html, reader/anchors.json, reader/annotations.json, reader/qa_log.json, reader/reading_state.json, reading_record.md |', '| 环境检查 | pdftotext=%s, pdfinfo=%s |' % (shutil.which('pdftotext') or 'absent', shutil.which('pdfinfo') or 'absent'), '']
     surf53.write_text('\n'.join(mark17), encoding='utf-8')
     return {'path': surf53.name, 'sha256': draf86(surf53), 'bytes': surf53.stat().st_size, 'current': term13, 'versions': [tile96[0] for tile96 in rend15], 'rollback': '见 version_history.md §3(5 步, 含校验命令)'}
 
@@ -99,7 +101,12 @@ def slic117(fram38, stri61, link41, surf53):
     mark17 = ['# 实际产物 vs 金标准 · 对照报告', '', '- case_id `%s` · 材料 `%s` · 文档哈希 `%s…` · 状态 `%s`' % (fram38['case_id'], (fram38['srcs'] or [{}])[0].get('source_id') or '-', (fram38['docsha'] or '-')[:16], fram38['status']), '- 生成 %s · 版本 %s · 金标准 `golden_standard.json` %d 项' % (now(), term13, len(stri61['items'])), '', '## 1. 总览', '', '- pass %d · missing %d · deviation %d · pending %d · 达标率(不含 pending) %s · 总体判定 **%s**' % (tail29['pass'], tail29['missing'], tail29['deviation'], tail29['pending'], link41['pass_rate'], link41['verdict']), '', '## 2. 逐项对照', '', '| 项 | 类别 | 要求 | 期望 | 实际 | 判定 | 复核位置 |', '|---|---|---|---|---|---|---|']
     for tile96 in anch99:
         prob71 = tile96.get('locator') or {}
-        head113 = '`%s` p%s/%s %s-%s' % (prob71.get('paragraph_id') or '-', prob71.get('pdf_page'), prob71.get('section') or '-', prob71.get('char_start'), prob71.get('char_end')) if prob71 else '-'
+        if prob71.get('json_pointer'):
+            head113 = '`%s#%s`' % (prob71.get('path') or 'case.json', prob71['json_pointer'])
+        elif prob71:
+            head113 = '`%s` p%s/%s %s-%s' % (prob71.get('paragraph_id') or '-', prob71.get('pdf_page'), prob71.get('section') or '-', prob71.get('char_start'), prob71.get('char_end'))
+        else:
+            head113 = '-'
         mark17.append('| %s | %s | %s | %s | %s | %s | %s |' % (tile96['item_id'], tile96['category'], grad30(tile96['requirement'], 60), grad30(tile96['expect'], 60), grad30(tile96['actual'], 60), tile96['verdict'], head113))
     marg25 = [tile96 for tile96 in anch99 if tile96['verdict'] != 'pass']
     mark17 += ['', '## 3. 非达标项', ''] + (['- 无。'] if not marg25 else [])
@@ -141,7 +148,7 @@ def text104(fram38, stri61, link41):
     regi23('C6', '主产物完整', 'pass' if not scor74 else 'fail', '%d 个主产物非空' % len(deri03), '缺/空 %s' % (scor74 or '无'))
     dige94 = meas01[:3]
     labe73 = [targ120 for targ120 in dige94 if not (fram38['outp'] / targ120).exists() or (fram38['outp'] / targ120).stat().st_size == 0]
-    regi23('C7', 'v2 资产落盘', 'pass' if not labe73 else 'fail', '5 件资产(后两件随后落盘, 复验)', '同批 %d/%d 已落盘%s' % (len(dige94) - len(labe73), len(dige94), ', self_check.json 随后写入' if not labe73 else ', 缺 %s' % labe73))
+    regi23('C7', 'v1.0.0 资产落盘', 'pass' if not labe73 else 'fail', '5 件资产(先写 3 件, 后两件随后落盘并复验)', '同批 %d/%d 已落盘%s' % (len(dige94) - len(labe73), len(dige94), ', 另两件随后写入' if not labe73 else ', 缺 %s' % labe73))
     regi23('C8', '本进程退出码', 'pass', '0(异常不外抛)', '0', '由 reader.finish() 调用, 结果已落盘')
     _selmiss = [itx.get('task_id') for itx in (fram38.get('sels') or []) if itx.get('quote') and itx['quote'] not in (fram38.get('doc') or '')]
     _pairbad = abs(len(fram38.get('anns') or []) - len((fram38.get('qa') or {}).get('qa') or []))
@@ -218,13 +225,13 @@ def valu48(poin87, tail29, rend114=''):
     join81 = '增补异常, 本文件为兜底最小版本; 原因见 self_check.json.checks[C0]'
     figu46(poin87 / meas01[0], {'schema': 'margin-reader/golden@1', 'case_id': reco31, 'generated_at': now(), 'status': 'degraded', 'items': [], 'note': join81})
     (poin87 / meas01[1]).write_text('# 对照报告\n\n- case_id `%s`\n- 判定 **unknown**\n- %s\n- 明细 %s\n' % (reco31, join81, (rend114 or '')[:240]), encoding='utf-8')
-    (poin87 / meas01[2]).write_text('# 版本历史 · margin-reader\n\n- 当前版本 %s · 本次运行 `%s`\n- 增补异常, 仅保留最小记录; v1→v2 差异见 SKILL.md §13。\n' % (term13, reco31), encoding='utf-8')
+    (poin87 / meas01[2]).write_text('# 版本历史 · margin-reader\n\n- 当前版本 %s · 本次运行 `%s`\n- 资产层异常, 仅保留最小记录; 正常运行时 §3 给出回退步骤, 此处由 SKILL.md §4.1 说明五件资产。\n' % (term13, reco31), encoding='utf-8')
     (poin87 / meas01[3]).write_text('# run.log\n\n[%s] ERROR augment_failed\n%s\n' % (now(), (rend114 or '')[:700]), encoding='utf-8')
     figu46(poin87 / meas01[4], {'schema': 'margin-reader/selfcheck@1', 'case_id': reco31, 'generated_at': now(), 'version': term13, 'overall': 'fail', 'counts': {'pass': 0, 'warn': 0, 'fail': 1, 'skipped': 0}, 'probes': [], 'checks': [{'check_id': 'C0', 'name': '增补流程', 'status': 'fail', 'expected': '生成 5 件资产', 'actual': '异常', 'detail': (rend114 or '')[:600]}], 'limits': ['兜底: 仅保证文件存在与 result.json 合法']})
     view40 = rank47(poin87 / 'result.json', None)
     if not isinstance(view40, dict):
         view40 = {'case_id': reco31, 'status': 'partial', 'result': None, 'claims': [], 'uncertainties': [], 'sources': [], 'pending_human': [], 'errors': [], 'degradations': [], 'changes': []}
-    for stre69, ledg57 in zip(('golden_standard', 'diff_report', 'version_history', 'self_check'), (meas01[0], meas01[1], meas01[2], meas01[4])):
+    for stre69, ledg57 in zip(('golden_standard', 'diff_report', 'version_history', 'run_log', 'self_check'), (meas01[0], meas01[1], meas01[2], meas01[3], meas01[4])):
         spli93 = poin87 / ledg57
         view40[stre69] = {'path': ledg57, 'sha256': draf86(spli93), 'bytes': spli93.stat().st_size if spli93.exists() else 0, 'status': 'degraded' if stre69 != 'self_check' else 'fail'}
     if isinstance(view40.get('errors'), list):
