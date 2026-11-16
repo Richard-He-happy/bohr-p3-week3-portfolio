@@ -1,7 +1,7 @@
 ---
 name: writing-bench-eval-kit
 description: Build a runnable and re-checkable academic-writing benchmark from a case folder. The kit emits an item sheet with executable requirements, evidence-bound reference answers that still allow legitimate wording variants, three-level machine-checkable anchors, two independent raters with disagreement-driven anchor repair, per-item scores and an evaluation report, a reproducibility record, a per-item gold standard plus a comparison report, a release history, a run log and a machine-readable audit. Triggers - 学术写作题集 / 评测工具 / 评分锚点 / 评分表 / 双评一致性 / 评测报告 / 金标准 / writing benchmark / score manuscripts against anchors. Use it when a task asks you to design writing items, score drafts, measure rater agreement, or trace a quality gap back to the prompt, the answer, the anchor or the run.
-version: 1.0.0
+version: 1.1.0
 license: MIT
 ---
 
@@ -57,12 +57,14 @@ python3 -B scripts/kernel.py --check <out> --input <case>          # 22 contract
 python3 -B scripts/kernel.py --audit <out>                         # re-score every cell from anchors + ratees
 ```
 
-Four modules, four jobs. `bench.py` drives the run and renders documents. `kernel.py` holds the shared
+Four modules do the work. `bench.py` drives the run and renders documents. `kernel.py` holds the shared
 core: material extraction, item construction, anchor rules, the two raters, aggregation, and the
 validation CLI. `ledger.py` writes the gold standard, the comparison and the score replay, and
 orchestrates the asset block. `journal.py` owns the run log, release history, package inventory,
-machine audit and the sealing steps. `bench.py` imports the other three; no intermediate file is meant
-to be edited by hand.
+machine audit and the sealing steps. A fifth helper, `assets_ext.py`, is the v1.1.0 verification-asset
+layer (contract/deliverable rows, item-by-item comparison, static release table, extra self-check
+assertions, run-log pointer); it is imported by `ledger.py` and `journal.py` and does not change the
+CLI. `bench.py` imports the rest; no intermediate file is meant to be edited by hand.
 
 The agent only has to: read this file, run `bench.py`, then inspect `status`, `consistency` and
 `pending_human` inside `result.json`.
@@ -100,18 +102,19 @@ The agent only has to: read this file, run `bench.py`, then inspect `status`, `c
 | `scores.csv` | per item: `score, verdict, anchors, points_met, failure_type, blame, evidence, improvement` |
 | `evaluation_report.md` | per-item score, evidence, failure type, fix suggestion; type mix; agreement; calibration; gaps |
 | `reproducibility.md` | versions, input sha256, anchor version, exact commands, determinism verdict |
-| `golden_standard.json` | per-item rubric, expected answer points, anchors with locator and verbatim quote, pass thresholds |
-| `diff_report.md` | shipped delivery vs gold standard: coverage, missing parts, deviations with severity, replay result |
-| `version_history.md` | version table: what each release added, why, and how to roll back |
+| `golden_standard.json` | per-item rubric, expected answer points, anchors with locator and verbatim quote, pass thresholds, plus `contract_expected` (one row per `output_contract` key, per work-order key and per expected deliverable, with `basis`/`locator`/`quote`) |
+| `diff_report.md` | shipped delivery vs gold standard: per-item coverage, deviations with severity, replay result, plus a per-row contract/deliverable comparison table |
+| `version_history.md` | static release table v0.0.0 -> v1.1.0 (content, reason, files, rollback recipe), then the runtime paragraph of this run |
 | `run.log` | relative timestamps, steps, degradations, errors, human-pending items, final `[exit] exit_code=0` |
-| `self_check.json` | machine audit: item count, completeness, quote hit rate, replayability, contract, fallbacks, exit code |
-| `result.json` | contract echo plus status, sources, uncertainty, errors, degradations, changes, runtime and four asset pointers |
+| `self_check.json` | machine audit: item count, completeness, quote hit rate, replayability, contract, main artefact, count consistency, fallbacks, exit code and asset pointers |
+| `result.json` | contract echo plus status, sources, uncertainty, errors, degradations, changes, runtime and five asset pointers (`golden_standard / diff_report / version_history / run_log / self_check`) |
 
 Extra fields in `result.json` for reviewers: `workorder_execution[]` (per work-order receipt),
 `coverage` (items, anchors, points, directions, writing types), `consistency` (kappa, anchors beyond a
-one-level gap, repairs, calibration table), `anchor_revisions[]`. The four asset fields
-`golden_standard / diff_report / version_history / self_check` carry path, hash, counts and verdict
-summary only - the files themselves stay in the output folder.
+one-level gap, repairs, calibration table), `anchor_revisions[]`. The five asset fields
+`golden_standard / diff_report / version_history / run_log / self_check` carry path, byte size,
+sha256 and a verdict summary only - the files themselves stay in the output folder, and the sha256 is
+computed on the bytes exactly as they sit on disk, so a reviewer can re-hash each pointer and compare.
 
 ## 6 Pipeline, step by step
 
@@ -205,6 +208,9 @@ evidence_locator, revision`. Rule types are exactly `contains_all`, `contains_an
 - [ ] `golden_standard.json` has at least three rubric points and three expected points per item, anchors carry locators, and material anchors are all verbatim.
 - [ ] `self_check.json` reports `summary.verdict == PASS`; failures must be explained, never deleted to force a PASS.
 - [ ] `diff_report.md` lists every item and gives deviations a severity; `run.log` ends with `[exit] exit_code=0`.
+- [ ] `golden_standard.contract_expected` covers every `output_contract` key and every expected deliverable; rows without a material source say `basis: contract`, rows with one carry `locator` + verbatim `quote`.
+- [ ] each of the five `result.json` asset pointers carries `path`, `bytes` and `sha256`; re-hashing the file on disk reproduces the pointer.
+- [ ] `version_history.md` contains the current release and a rollback recipe; `self_check.json` total equals the sum of its groups and every check is true.
 - [ ] calibration: the positive control scores at least 85 everywhere and the negative control is clearly lower; otherwise the anchors do not discriminate and the criteria must change.
 
 ## 13 Files and versions
@@ -216,13 +222,14 @@ evidence_locator, revision`. Rule types are exactly `contains_all`, `contains_an
 | `scripts/kernel.py` | shared core plus validation CLI (`--check`, `--audit`) |
 | `scripts/ledger.py` | gold standard, comparison report, score replay, asset orchestration |
 | `scripts/journal.py` | run log, release history, package inventory, self audit, sealing |
+| `scripts/assets_ext.py` | v1.1.0 verification-asset layer: contract/deliverable rows, item-by-item comparison, static release table, extra self-check assertions, run-log pointer |
 | `references/authoring-rules.md` | how to write items and anchors, rater policy, failure patterns, reuse across fields |
 | `references/operator-handbook.md` | field dictionary, full command walk-through, worked example, limits |
 | `references/stylepack.json` | every document template and the item-type/fix tables; wording changes need no code change |
 
-Current package version `1.0.0`; anchor-rule version `1.0.0` (rules unchanged since the first release,
-so older `scores_detail.csv` files still replay). Bump the four script constants `KVER` and
-`version_history.md` together.
+Current package version `1.1.0` (v1.0.0 baseline + verification-asset patch); anchor-rule version
+`1.0.0` (rules unchanged since the first release, so older `scores_detail.csv` files still replay).
+Bump the `KVER` constants and `version_history.md` together.
 
 Known limits: scientific opinion is not judged; PDF extraction is heuristic (Flate plus Tj/TJ), so
 scanned pages need external OCR; with no manuscript the kit delivers items, anchors and calibration
@@ -240,3 +247,31 @@ python3 -B scripts/bench.py --input ./case --output ./out
 
 The console line looks like `[done] case=... status=ok items=6 anchors=30 assets=5/5 out=./out`. Those
 numbers only illustrate the interface and are **not** results of any official case.
+
+## 15 Verifiable asset set (v1.1.0)
+
+Every `bench.py` run writes five extra files next to the primary delivery. They need **no extra flag**,
+no second command and no network; if their layer raises, `fallback_assets` still writes honest
+placeholders and the primary items/scores/report are never emptied. `result.json` carries one pointer
+per asset (`path`, `bytes`, `sha256`) so a reviewer can re-hash the file and compare.
+
+| Asset | What a reviewer can re-check | Pointer field |
+|-|-|-|
+| `golden_standard.json` | per-item rubric / expected points / anchors (locator + verbatim quote + thresholds); `contract_expected` lists every `output_contract` key, work-order key and expected deliverable with `basis` (`contract` when the brief is the only source, `task_spec` when a material quote exists), `locator`, `quote`, `quote_verbatim` | `result.json.golden_standard` |
+| `diff_report.md` | the shipped delivery against that gold standard: per-item table, a `## 2b` contract/deliverable table with `met / deviation / missing` and the value observed on disk, score replay result | `result.json.diff_report` |
+| `version_history.md` | static v0.0.0 -> v1.1.0 release table (content, reason, files touched, rollback recipe), the runtime paragraph of this run, and rollback recipes at package / single-asset / single-run level | `result.json.version_history` |
+| `run.log` | real stage log with relative timestamps, counts, degradations, errors, pending-human items, asset sizes and the final `[exit] exit_code=0` | `result.json.run_log` |
+| `self_check.json` | 34 machine assertions in eight groups: schema 4, evidence 3, scoring 3, contract 7, artifacts 1, assets 8, counts 1, robustness 7. Includes main-artefact presence, quote hit rate, count consistency, degraded-input probes, exit-code policy, asset pointers and sha256. `summary.verdict` must be `PASS`. | `result.json.self_check` |
+
+Re-check by hand (same output folder):
+
+```bash
+python3 -B scripts/kernel.py --check /app/output --input /input   # 22 contract/join/report/evidence checks
+python3 -B scripts/kernel.py --audit /app/output                   # re-scores every cell from anchors + ratees
+python3 -c "import json,hashlib;d=json.load(open('/app/output/result.json'));[print(k,hashlib.sha256(open('/app/output/'+d[k]['path'],'rb').read()).hexdigest()==d[k]['sha256']) for k in ('golden_standard','diff_report','version_history','run_log','self_check')]"
+```
+
+Rollback is a file operation: the v1.0.0 baseline is the backup copy of this package; delete
+`scripts/assets_ext.py` and restore `bench.py / kernel.py / ledger.py / journal.py / SKILL.md` to go back
+to v1.0.0, or drop a single asset file and rerun `bench.py` to regenerate it. The full recipe lives in
+`version_history.md` section 3 of every run.
