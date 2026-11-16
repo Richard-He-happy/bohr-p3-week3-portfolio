@@ -1,4 +1,4 @@
-# 证据强度算法与运行手册（writing-03 · 1.0.0）
+# 证据强度算法与运行手册（writing-03 · 1.1.0）
 
 ## 0. 先看匹配，再看强度
 
@@ -59,13 +59,17 @@
 
 ```bash
 # 准备：/input/case.json、/input/task.md、/input/artifacts/*
-python -B scripts/pipeline.py                       # 默认 /input -> /app/output
-python -B scripts/audit.py                          # 复核，写 verification.json
+python3 -B scripts/pipeline.py init     # 索引 + 首份 partial result.json
+python3 -B scripts/pipeline.py show     # 打印带 locator 的原文，供逐字复制 quote
+# Agent 写 /app/work/draft.json（论断 + source_id/locator/逐字 quote），再：
+python3 -B scripts/pipeline.py check    # 引文命中/字段/join 体检
+python3 -B scripts/pipeline.py build    # 三段产物 + result.json + 五件核验资产
+python3 -B scripts/pipeline.py audit    # 独立复核，写 verification.json
 ```
 
-产物一览（均在输出目录）：`result.json`、`claims.json`、`evidence_table.json`、`evidence_driven_draft.md`、`deliverable.md`、`evidence_strength.md`、`reference_check.md`、`uncertainty_notes.md`、`pending_human.json`，复核后多一个 `verification.json`。
+产物一览（均在输出目录）：`result.json`、`claims.json`、`evidence_table.json`、`evidence_driven_draft.md`、`deliverable.md`、`evidence_strength.md`、`reference_check.md`、`uncertainty_notes.md`、`pending_human.json`，以及 `golden_standard.json`、`diff_report.md`、`version_history.md`、`run.log`、`self_check.json` 五件可核验资产；复核后多一个 `verification.json`。
 
-合格标准：复核脚本打印 `verify PASS`；`result.json` 的 `status` 与实际待办一致。
+合格标准：`audit.py` 打印 `verify PASS`；`self_check.json` 的 `pass` 为 `true`；`result.json` 的 `status` 与实际待办一致（无工作稿时自动组合的完整兜底交付记 `partial`）。
 
 ## 6. 异常见处理
 
@@ -80,6 +84,8 @@ python -B scripts/audit.py                          # 复核，写 verification.
 | 扫描件 PDF | 不猜内容 | `read_method: none`、提示 OCR |
 | 图片 | 不猜内容 | `pending_human` |
 | 输出目录无法写入 | 换到当前目录 | `errors` 记录回退 |
+| 缺工作稿 | 从材料自动组合完整交付物 + 五件资产 | `degradations` 记 `agent_work_absent`、`status=partial` |
+| 工作稿 quote 未逐字命中 | 丢弃该行，改自动匹配，并进 `pending_human` | `degradations` 记 `quote_not_verbatim`，不改原文凑通过 |
 | 缺 case.json | 尽力从材料推断，契约 5 键兜底 | `errors`、`status=partial` |
 | 输入目录为空或 case.json 损坏 | 仍写 partial 结果 | `status=input_error/partial`，退出码 0 |
 
@@ -90,12 +96,12 @@ python -B scripts/audit.py                          # 复核，写 verification.
 外加一份两条著录的文献表；`case.json` 的 `case_id` 为 DEMO-G7。
 
 ```bash
-python -B scripts/pipeline.py --input demo/input --output demo/output
+python3 -B scripts/pipeline.py build --input demo/input --output demo/output --work demo/work
 ```
 
-示意输出：`done partial claims=5 rows=7 quote=6/6 pending=1`。也就是论断 5 条、证据 7 行、6 行引文命中、
+示意输出：`done partial claims=5 rows=7 quote=6/6 pending=1 assets=5/5`。也就是论断 5 条、证据 7 行、6 行引文命中、
 1 条留给人工补证；成稿里越级因果句被改成"与……相关[1][2]"；`result.json` 的 `status` 为 `partial`，
-`overclaim_downgrades` 为 1。
+`overclaim_downgrades` 为 1；五件可核验资产（金标准/对照/版本/日志/自检）同时落盘。
 
 ## 8. 边界与维护
 
