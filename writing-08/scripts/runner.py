@@ -20,9 +20,21 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import corpus as C
+try:
+    import assets as A
+except Exception:
+    A = None
 V = '1.0.0'
 PH = '[待译 / PENDING TRANSLATION]'
 T0 = time.time()
+
+def log_phase(work_dir, phase, ok=True, **fields):
+    if A is None:
+        return
+    try:
+        A.log_event(work_dir, phase, ok=ok, **fields)
+    except Exception:
+        pass
 
 def guess_direction(para_record, draft_doc, case_meta):
     flat_text = '\n'.join((para['text'] for para in para_record.get('paragraphs', [])[:20]))
@@ -86,6 +98,7 @@ def do_init(opts):
     d, work_dir, output_dir = C.resolve_roots(opts)
     for chunk_txt in (work_dir, output_dir):
         chunk_txt.mkdir(parents=True, exist_ok=True)
+    log_phase(work_dir, 'command', verb='init', input=str(d))
     case, cpath = C.locate_case(d)
     case_meta = C.case_fields(case or {})
     case_token, contract_fields, error_list = (str(case_meta.get('case_id') or 'unknown'), case_meta.get('contract') or {}, [])
@@ -113,6 +126,7 @@ def do_init(opts):
     print('\nNEXT STEP: read the actual source text (show --para ... or open the files) and hand-write %s/workdraft.json' % work_dir)
     print('  {"case_id":"...","target_lang":"zh|en","glossary":[{"term","target","locator"}],"paragraphs":[{"para_id","source_quote","translation","note"}],"change_log":[...]}')
     print('  then run: check -> build')
+    log_phase(work_dir, 'init', ok=not error_list, materials=len(para_record['materials']), paragraphs=len(para_record['paragraphs']), contract_keys=len(para_record['contract_keys']), terms=len(para_record['supplied_terms']), unreadable=len(para_record['warnings']))
     return 0
 
 def do_show(opts):
@@ -154,6 +168,7 @@ def report_block(report):
 
 def do_check(opts):
     _, work_dir, _ = C.resolve_roots(opts)
+    log_phase(work_dir, 'command', verb='check')
     para_record = C.read_json(work_dir / 'index.json') or {}
     draft_doc, consumed_chars, visited_paths = C.pick_draft(work_dir, opts.draft)
     report = C.audit_draft(para_record, draft_doc)
@@ -164,12 +179,14 @@ def do_check(opts):
     print(report_block(report))
     if report.get('verdict') != 'pass':
         print('\nRework the draft and run check again. `build` always completes and emits an honest partial result.')
+    log_phase(work_dir, 'check', ok=report.get('verdict') == 'pass', verdict=report.get('verdict'), coverage=(report.get('coverage') or {}).get('ratio'), quotes=len(report.get('quote_issues') or []), numbers=len(report.get('number_issues') or []), citations=len(report.get('citation_issues') or []), terms=len(report.get('term_issues') or []))
     return 0
 
 def do_build(opts):
     d, work_dir, output_dir = C.resolve_roots(opts)
     for chunk_txt in (output_dir, work_dir):
         chunk_txt.mkdir(parents=True, exist_ok=True)
+    log_phase(work_dir, 'command', verb='build', input=str(d), output=str(output_dir))
     error_list, degradations, script_notes = ([], [], [])
     case, cpath = C.locate_case(d)
     case_meta = C.case_fields(case or {})
@@ -180,8 +197,10 @@ def do_build(opts):
         para_record = C.build_index(d, case or {}, case_meta)
     case_token = str(para_record.get('case_id') or case_meta.get('case_id') or 'unknown')
     contract_fields = case_meta.get('contract') or para_record.get('contract') or {}
+    log_phase(work_dir, 'index', materials=len(para_record.get('materials') or []), paragraphs=len(para_record.get('paragraphs') or []), contract_keys=len(contract_fields), terms=len(para_record.get('supplied_terms') or []))
     draft_doc, consumed_chars, _ = C.pick_draft(work_dir, opts.draft)
     report = C.audit_draft(para_record, draft_doc)
+    log_phase(work_dir, 'audit', verdict=report.get('verdict'), coverage=(report.get('coverage') or {}).get('ratio'), draft=str(consumed_chars), quotes=len(report.get('quote_issues') or []), numbers=len(report.get('number_issues') or []))
     if draft_doc is None:
         degradations.append('no Agent work draft found; deterministic scaffold delivered (translation slots marked)')
     draft_units = {para_draft['para_id']: para_draft for para_draft in (draft_doc or {}).get('paragraphs') or [] if isinstance(para_draft, dict) and para_draft.get('para_id')}
@@ -221,16 +240,39 @@ def do_build(opts):
         error_list.append('change log build failed: %s' % err_obj)
     produced['_facts'] = len(fact_rows)
     produced['_miss'] = sum((1 for chunk_txt in fact_rows if not chunk_txt.get('present_in_target')))
+    log_phase(work_dir, 'render', units=unit_total, translated=unit_total - open_units, glossary=len(term_entries), facts=len(fact_rows), status=status)
     res_obj = C.compose_result(para_record, report, term_entries, open_units, status, produced, error_list, degradations, log_entries, consumed_chars, contract_fields, case_token, V, time.time() - T0)
     saved_path = C.persist_result(output_dir, res_obj, error_list)
+    log_phase(work_dir, 'result_core', ok=bool(saved_path), status=status, contract_keys=len(contract_fields), deliverable=opts.deliverable_name)
+    asset_bundle = None
+    if A is None:
+        error_list.append('verifiable-asset layer unavailable: assets.py failed to import')
+        degradations.append('asset layer missing; the core seven deliverables and result.json are still valid')
+        log_phase(work_dir, 'assets', ok=False, error='assets module unavailable')
+    else:
+        try:
+            asset_bundle = A.publish(index=para_record, report=report, result_doc=res_obj, contract_fields=contract_fields, case_token=case_token, status=status, terms=term_entries, deliverable_name=opts.deliverable_name, output_dir=output_dir, work_dir=work_dir, input_dir=d, script_dir=Path(__file__).resolve().parent, case_path=cpath, errors=error_list, degradations=degradations, elapsed=time.time() - T0)
+        except Exception as err_obj:
+            error_list.append('verifiable-asset layer failed: %r' % (err_obj,))
+            degradations.append('asset layer degraded; core deliverables and result.json still emitted')
+            log_phase(work_dir, 'assets', ok=False, error=repr(err_obj))
+    if asset_bundle:
+        try:
+            res_obj.update(asset_bundle.get('fields') or {})
+            saved_path = C.persist_result(output_dir, res_obj, error_list)
+        except Exception as err_obj:
+            error_list.append('result.json asset summary write failed: %r' % (err_obj,))
     print('status:', status, '| paragraphs:', unit_total, '| translated:', unit_total - open_units, '| glossary:', len(term_entries), '| verdict:', report.get('verdict'))
     print('outputs:', json.dumps({dict_key: val for dict_key, val in produced.items() if not dict_key.startswith('_')}, ensure_ascii=False))
+    if asset_bundle:
+        print('assets:', json.dumps(asset_bundle.get('fields') or {}, ensure_ascii=False))
     print('result:', str(saved_path) if saved_path else 'FAILED')
     return 0
 
 def do_audit(opts):
     """Read-only audit of what build produced; never rebuilds and never exits non-zero."""
     in_root, work_dir, output_dir = C.resolve_roots(opts)
+    log_phase(work_dir, 'command', verb='audit')
     index = C.read_json(work_dir / 'index.json') or {}
     draft_doc, draft_path, _ = C.pick_draft(work_dir, None)
     if isinstance(draft_doc, dict):
@@ -268,12 +310,24 @@ def do_audit(opts):
     honest_status = (report.get('verdict') == 'pass') == (result_doc.get('status') == 'ok')
     mark('status matches check verdict', honest_status,
          {'verdict': report.get('verdict'), 'status': result_doc.get('status')})
+    asset_names = getattr(A, 'ASSET_NAMES', ('golden_standard.json', 'diff_report.md', 'version_history.md', 'run.log', 'self_check.json'))
+    asset_sizes = {}
+    for asset_name in asset_names:
+        asset_path = output_dir / asset_name
+        asset_sizes[asset_name] = asset_path.stat().st_size if asset_path.is_file() else 0
+    mark('verifiable assets present', all(size > 0 for size in asset_sizes.values()), asset_sizes)
+    self_doc = C.read_json(output_dir / 'self_check.json') or {}
+    mark('self_check passed', bool(self_doc.get('ok')),
+         {'total': self_doc.get('checks_total'), 'passed': self_doc.get('checks_passed'), 'failed': self_doc.get('failed')})
+    diff_text = C.read_text(output_dir / 'diff_report.md') if (output_dir / 'diff_report.md').is_file() else ''
+    mark('diff report non-empty', bool(C.squeeze(diff_text)), {'bytes': len(diff_text)})
     rates = C.quality_rates(report)
     verdict = all(entry['ok'] for entry in checks)
+    log_phase(work_dir, 'audit_finished', ok=verdict, checks=len(checks), passed=sum(1 for entry in checks if entry['ok']), assets=len(asset_names))
     C.dump_json(work_dir / 'audit.json',
                 {'case_id': index.get('case_id') or result_doc.get('case_id'),
                  'passed': verdict, 'checks': checks, 'rates': rates,
-                 'draft': draft_path, 'deliverable': deliverable})
+                 'assets': asset_sizes, 'draft': draft_path, 'deliverable': deliverable})
     print('audit: %s | %d/%d checks | rates %s' % (
         'PASS' if verdict else 'ATTENTION', sum(1 for entry in checks if entry['ok']),
         len(checks), json.dumps(rates, ensure_ascii=False)))
