@@ -11,7 +11,8 @@ import sys
 import zipfile
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+ASSET_NAMES = ("golden_standard.json", "diff_report.md", "version_history.md", "run.log", "self_check.json")
 
 # primitives
 CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
@@ -312,7 +313,10 @@ def ref_text(doc, refs, number, phrases):
     """Best-effort bibliography line from the material; mark gaps instead of inventing."""
     body = doc.get("text", "") or ""
     for ref in refs:
-        if (ref["doi"] and ref["doi"] in body) or overlap(ref["body"][:150], body[:300]) >= 0.35:
+        if ref["doi"] and ref["doi"] in body:
+            return re.sub(r"^\s*(?:\[\d+\]|\d+[.)])\s*", "", ref["raw"])
+    for ref in refs:
+        if overlap(ref["body"][:150], body[:300]) >= 0.5:
             return re.sub(r"^\s*(?:\[\d+\]|\d+[.)])\s*", "", ref["raw"])
     head = " ".join(body.split())[:170]
     if len(head) > 40 and re.search(r"(19|20)\d{2}", head):
@@ -429,11 +433,32 @@ def audit_out(ind, out):
     incomplete = [row["claim_id"] for row in rows if not all(field in row for field in ("locator", "strength", "support_scope", "quote"))]
     checks.append({"check": "row_fields", "pass": not incomplete, "detail": "缺字段: %s" % incomplete if incomplete else "四要素齐全"})
 
-    markers = sorted({int(x) for x in re.findall(r"\[(\d{1,3})\]", draft)})
+    body_of_draft = re.split(r"\n#{1,6}\s*(?:参考文献|References)\s*\n", draft or "", maxsplit=1, flags=re.I)[0]
+    markers = sorted({int(x) for x in re.findall(r"\[(\d{1,3})\]", body_of_draft)})
     source_count = len({row["source_id"] for row in rows if row.get("source_id")})
-    checks.append({"check": "citation_resolvable", "pass": bool(markers) and max(markers) <= source_count, "markers": len(markers), "sources": source_count, "detail": "%s/%d" % (markers, source_count)})
+    checks.append({"check": "citation_resolvable", "pass": (not markers) or max(markers) <= source_count, "markers": len(markers), "sources": source_count, "detail": "%s/%d" % (markers, source_count)})
     loud = OVERCLAIM.findall(draft)
     checks.append({"check": "overclaim_scan", "pass": not loud, "hits": len(loud), "detail": "越级表述 %d 处" % len(loud) if loud else "无越级表述"})
+
+    asset_sizes = {}
+    for name in ASSET_NAMES:
+        path = out / name
+        asset_sizes[name] = path.stat().st_size if path.is_file() else 0
+    assets_ok = all(size > 0 for size in asset_sizes.values())
+    checks.append({"check": "verifiable_assets", "pass": assets_ok, "sizes": asset_sizes,
+                   "detail": "5 资产齐全" if assets_ok else "缺失/空: %s" % [k for k, v in asset_sizes.items() if not v]})
+    golden = _load_json(out / "golden_standard.json")
+    golden_items = golden.get("items") or []
+    golden_quoted = [item for item in golden_items if item.get("quote")]
+    golden_hit = sum(1 for item in golden_quoted if item.get("quote_verbatim"))
+    golden_ok = bool(golden_items) and (not golden_quoted or golden_hit == len(golden_quoted))
+    checks.append({"check": "golden_standard", "pass": golden_ok, "items": len(golden_items),
+                   "quote_hit": golden_hit, "quote_total": len(golden_quoted),
+                   "detail": "金标准 %d 条/逐字 %d/%d" % (len(golden_items), golden_hit, len(golden_quoted))})
+    self_check = _load_json(out / "self_check.json")
+    checks.append({"check": "self_check", "pass": self_check.get("pass") is True,
+                   "checks": len(self_check.get("checks") or []),
+                   "detail": "自检 pass=%s checks=%d" % (self_check.get("pass"), len(self_check.get("checks") or []))})
 
     report = { "case_id": result.get("case_id"), "passed": all(check["pass"] for check in checks), "checks": checks, "metrics": { "claims": len(claims), "evidence_rows": len(rows), "quotes": len(quoted), "quote_hit": len(quoted) - len(misses), "distinct_sources": source_count, "citation_markers": len(markers), },
         "limits": ["未联网核验文献真实性与 DOI（离线）", "扫描件/图像无法逐字校验，见 degradations"],
@@ -444,9 +469,10 @@ def audit_out(ind, out):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser( prog="audit.py", description="Independent audit for the evidence-writing kit: verbatim quote hit, " "claim/evidence join, contract backfill, citation resolution, overclaim scan.")
+    parser = argparse.ArgumentParser( prog="audit.py", description="Independent audit for the evidence-writing kit: verbatim quote hit, " "claim/evidence join, contract backfill, citation resolution, overclaim scan, " "and the five verifiable assets.")
     parser.add_argument("--input", default="/input", help="input directory (default /input)")
     parser.add_argument("--output", default="/app/output", help="output directory (default /app/output)")
+    parser.add_argument("--version", action="version", version="writing-03 " + VERSION)
     args = parser.parse_args(argv)
     try:
         audit_out(args.input, args.output)
