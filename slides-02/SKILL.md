@@ -1,7 +1,7 @@
 ---
 name: paper-to-defence-deck
-description: Turn a paper or research summary into a defensible academic talk deck. Delivers a real editable .pptx that inherits the organizer template, speaker notes per slide, a rendered PDF preview, a page plan frozen before rendering, a page-level golden standard with per-page diff, export/template inspection, a final self-check, and a contract-complete result.json whose bullets carry verbatim source quotes and locators. Handles generate/edit/adapt workorders, evidence-mapped slides and honest degradation. Use for 论文转汇报, 组会/开题/中期/答辩 decks, template adaptation, or editing an existing deck.
-version: 1.0.0
+description: Turn a paper or research summary into a defensible academic talk deck. Delivers a real editable .pptx that inherits the organizer template, speaker notes per slide, a rendered PDF preview, a page plan frozen before rendering, a page-level golden standard with evidence locators and verbatim quotes, a per-page diff with page-count consistency, export/template/format inspection, version and run records, a closing self-check, and a contract-complete result.json. Handles generate/edit/adapt workorders, evidence-mapped slides and honest degradation. Use for 论文转汇报, 组会/开题/中期/答辩 decks, template adaptation, or editing an existing deck.
+version: 1.1.0
 ---
 
 # paper-to-defence-deck
@@ -28,8 +28,28 @@ peer review, re-analysis, chart pixel digitisation, prose polishing, PowerPoint 
 
 Flags: `--slides N`, `--template X.pptx`, `--no-pdf`, `--reuse-plan plan_v0.json`, `--no-golden`,
 `--legacy-sections`, `--version`, `--help`. `--reuse-plan` replays a recorded page skeleton;
-`--no-golden` writes only core result fields; `--legacy-sections` restores one-label-per-page
-detection. All three are documented rollback targets inside `result.json.version_history`.
+`--no-golden` writes only core result fields (format compliance and the closing self-check still run);
+`--legacy-sections` restores one-label-per-page detection. The first two are rollback targets inside
+`result.json.version_history`.
+
+## Page-level verifiable assets
+
+Every run writes eight files beside `result.json`, each mirrored by a result-root summary field, so a
+reviewer can re-check the deck without re-running it:
+
+| file | what a reviewer can verify |
+|---|---|
+| `page_golden.json` | standard frozen before any slide XML: per-page title, role, key points, bullet budget, numbers/citations and **evidence with locator + verbatim quote**, re-checked against the source |
+| `page_diff.md` | deck vs standard: seven checks per page, hard/soft gaps, gap index, **page-count consistency table** (golden/plan/pptx slides/pptx notes/content_map/PDF), reproduce block |
+| `version_history.md` | static lineage `0.1.0 → 1.1.0` + rollback columns, then a runtime run record, environment and artefact manifest |
+| `run.log` | real stage log: one line per stage with wall time, exceptions, degradations and `exit code 0` |
+| `export_check.json` | pptx unzipped, real PDF header/pages, fonts, word boxes, PNG IHDR, **every failure reason**; missing `pdffonts`/`pdftotext` is `unknown`, never `pass` |
+| `template_check.json` | canvas, master, theme part/fonts/colours, placeholder binding, footer slot, **slide→layout map**, deviations |
+| `format_compliance.json` | canvas ratio vs 16:9, requested/delivered/pptx/PDF page counts, title/body/subtitle/footer sizes on the 20→12 pt ladder and 28–36 pt title step, hierarchy, font family, footer text/position |
+| `self_check.json` | contract echo, main artefact, page-count consistency, quote traceability, the eight files, empty/corrupt-input fallback probes, exit code |
+
+The `--no-golden` rollback flag intentionally skips the inspection files; the self-check then reports
+that asset check as `n/a` instead of pretending the files exist.
 
 ## Reading the input (content, not filename labels)
 
@@ -56,9 +76,11 @@ bootstrap (dirs/case/contract echo/partial result) → gather (file scan, workor
 with pdftotext or the stdlib PDF reader, DOCX/TXT/MD direct, metadata) → plan (`plan_v0.json`) →
 register (`page_golden.json`) → build (`presentation.pptx`, `presentation.pdf`) → audit (verbatim
 evidence, `content_map`, `compliance_checks`) → inspect (`export_check.json`,
-`template_check.json`, `page_diff.md`) → finalize (`result.json`, `selfcheck.json`, `run.log`).
+`template_check.json`, `format_compliance.json`, `page_diff.md`) → finalize (`version_history.md`,
+`run.log`, `self_check.json`, `result.json`).
 Plan and standard are frozen before any slide part is written, so the diff compares a prediction with
-the delivery and a page can honestly fail.
+the delivery and a page can honestly fail. The closing self-check re-opens the delivered files instead
+of trusting the builder.
 
 ## Page plan schema (`plan_v0.json`)
 
@@ -78,19 +100,22 @@ dropped with `POOL_EXHAUSTED`, never padded with invented text.
 
 ## Golden standard and diff
 
-`page_golden.json` freezes, per planned page, role, narrative job, expected/declared sections, bullet
-range, required verbatim numbers, owed figure/table citations, figure placement, claim expectation and
-planned quotes. `page_diff.md` compares it with the delivered `content_map` on seven checks (role,
-sections, numbers, citations, bullets, evidence, overflow; hard vs soft split and schema in
-`references/playbook.md`) and carries summary, per-page expected-vs-actual tables, a numbered gap index
-and a reproduction block; `result.json.page_diff` holds the machine summary.
+`page_golden.json` freezes, per planned page, title, role, key points, bullet range, required numbers,
+figure/table citations, figure placement, claim expectation and **evidence items with locator + verbatim
+quote** (each quote re-checked against the source at registration time). `page_diff.md` compares it with
+the delivered `content_map` on seven checks (role, sections, numbers, citations, bullets, evidence,
+overflow; hard/soft split in `references/playbook.md`), lists the frozen golden evidence per page, and
+carries summary, **page-count consistency table**, per-page expected-vs-actual tables, a numbered gap
+index and a reproduce block; `result.json.page_diff` holds the machine summary, including
+`page_count_consistent`.
 
 ## `result.json` contract
 
 Root keys: `case_id`, `status`, `editable_source`, `export_artifact`, `content_map`,
 `compliance_checks`, `exceptions`, plus `errors`, `degradations`, `pending_human`, `uncertainty`,
-`sources`, `changes`, `runtime`, `page_golden`, `page_diff`, `export_check`, `template_check`,
-`version_history`, `selfcheck`, and every key of the input `output_contract`.
+`sources`, `changes`, `runtime`, `page_golden`, `page_diff`, `version_history`, `export_check`,
+`template_check`, `format_compliance`, `run_log`, `self_check` (also mirrored as `selfcheck`), and
+every key of the input `output_contract`.
 
 - **`status`** — three honest states: `ok` needs a written deck, zero unverified source bullets, a
   genuine (not degraded) preview, passing compliance and no hard page failure; `insufficient_evidence`
@@ -106,15 +131,21 @@ Root keys: `case_id`, `status`, `editable_source`, `export_artifact`, `content_m
 - **`compliance_checks`** — the contract guard: requested vs delivered counts, role order, design
   provenance, note coverage, text-fit model, figure accounting, evidence ratio, preview status, key
   accounting, and one `overall_pass`.
-- **`page_golden` / `page_diff`** — where the frozen standard lives and its verdict summary: per-page
-  outcomes, hard/soft gap tallies, headline-number and figure coverage, gap list.
-- **`export_check` / `template_check`** — the two inspection reports: what the PDF really contains, and
-  whether the organizer design survived; both carry item-level status plus evidence.
-- **`version_history`** — skill lineage, one row per stage executed with its artifact, rollback switches.
+- **`page_golden` / `page_diff`** — the frozen standard and its verdict summary: per-page outcomes,
+  hard/soft gap tallies, headline-number and figure coverage, gap list, evidence totals, page-count
+  agreement.
+- **`export_check` / `template_check`** — what the pptx archive and PDF really contain (page parts,
+  header, pages, fonts, word boxes, PNG IHDR, failure reasons) and whether the organizer design survived
+  (inheritance items, slide→layout map, deviations).
+- **`format_compliance`** — canvas ratio, page counts, title/body/footer font sizes, hierarchy, font
+  family, footer text/position, pass/fail per item.
+- **`version_history`** — lineage `0.1.0 → 1.1.0` with rollback targets plus the runtime run record,
+  environment and artefact manifest.
+- **`run_log`** — path, stage count, elapsed seconds, byte count, exit code 0.
+- **`self_check`** — contract echo, main artefact, page-count consistency, quote traceability, the eight
+  artefacts, empty/corrupt-input fallback probes and the exit code; `selfcheck` is the legacy alias.
 - **`exceptions[]`** — failure records `{code, stage, detail}`; conversion failures add a suggested
   `action`.
-- **`selfcheck`** — the closing independent pass over the delivered files: package members, preview
-  page count, content-map length, contract echo, evidence rate and status honesty.
 
 ## Evidence and numbers
 
@@ -146,16 +177,23 @@ Root keys: `case_id`, `status`, `editable_source`, `export_artifact`, `content_m
 
 ## Self-check and reviewer protocol
 
-The final `selfcheck` stage re-reads delivered files instead of trusting the build, writes
-`selfcheck.json` and mirrors a summary in `result.json.selfcheck`. Manual re-check:
+The final `self_check` stage re-reads delivered files instead of trusting the build, writes
+`self_check.json` and mirrors a summary in `result.json.self_check` (legacy alias `selfcheck`). Its nine
+checks answer the reviewer's questions: contract keys echoed, main artefact opens with one slide/notes
+part per page, every artefact agrees on the page count, every quote is verbatim and traceable to the
+golden standard, the eight files exist and are mirrored in `result.json`, empty input and a corrupt
+`case.json` still exit 0 with a valid envelope, and the process exit code is 0. Manual re-check:
 
 1. `--help` and `--version` exit 0.
 2. `result.json` parses and has every `output_contract` key at the root.
 3. `len(content_map) == editable_source.slides`; every `kind=source` bullet has `verified: true`.
 4. The pptx opens as a zip with `ppt/presentation.xml`, one slide part and one notes part per slide;
    the PDF starts with `%PDF-` and has one page per slide.
-5. `page_diff.md` covers every page and its gap index matches `result.json.page_diff.gaps`.
-6. `template_check.json` items are `pass`, or their `warn`/`n/a` reason is visible in the evidence.
+5. `page_diff.md` covers every page, its gap index matches `result.json.page_diff.gaps` and its
+   page-count table is `PASS`.
+6. `export_check.json`, `template_check.json` and `format_compliance.json` items are `pass`, or their
+   `warn`/`unknown`/`n/a` reason is visible in the evidence.
+7. `self_check.json` is `overall_pass: true` with an empty `failures` list.
 
 ## Quality bar and troubleshooting
 
@@ -207,19 +245,22 @@ Minimal call (example only, not a formal case result): `case.json` with
 python3 -B scripts/main.py --input /input --output /app/output
 ```
 
-That demo yields 8 slides with every source bullet verified and `export_artifact.pages = 8`; its diff
-may be `PASS` or `PARTIAL` depending on what the source names. These numbers describe the interface,
-not a benchmark score.
+That demo yields 8 slides with every source bullet verified and `export_artifact.pages = 8`, written
+next to `result.json`, `presentation.pptx`, `presentation.pdf`, `plan_v0.json` and the eight page-level
+artefacts above; its diff may be `PASS` or `PARTIAL`. These numbers describe the interface, not a
+benchmark score.
 
 Package: `scripts/main.py` (CLI + stages), `scripts/sourcekit.py` (discovery, contract echo,
 extraction, sentence/section analysis, planning), `scripts/packaging.py` (OOXML assembly, design
-inheritance, geometry, PDF fallback), `scripts/goldcheck.py` (golden standard, diff, history),
-`scripts/verify.py` (compliance, export/template inspection, self-check), `scripts/design.py`
-(compressed OOXML furniture + builtin design), `references/playbook.md` (role table, budgets, schemas,
-checklist, limits). Change static XML in `design.py`, role rules in `sourcekit.PAGE_RULES` /
-`ROLE_TITLES`, per-role contracts in `goldcheck.ROLE_SPEC`, geometry in `packaging.compose_slide`; then
-re-run the checks on an English source, a Chinese source, a template case, a starting-deck case and
-empty input, and confirm `--legacy-sections` still shows section gaps.
+inheritance, geometry, PDF fallback), `scripts/goldcheck.py` (golden standard, page diff, version
+history), `scripts/verify.py` (compliance, export/template/format inspection, self-check with the
+fallback probes), `scripts/design.py` (compressed OOXML furniture + builtin design),
+`references/playbook.md` (role table, budgets, schemas, checklist, limits). Change static XML in
+`design.py`, role rules in `sourcekit.PAGE_RULES` / `ROLE_TITLES`, per-role contracts in
+`goldcheck.ROLE_SPEC`, geometry in `packaging.compose_slide`; then re-run the checks on an English
+source, a Chinese source, a template case, a starting-deck case and empty input, and confirm
+`--legacy-sections` still shows section gaps. The eight runtime artefacts are regenerated on every run;
+the package itself stays static.
 
 Known limits: scanned PDFs are not OCRed; only embedded JPEG figures are reused; tables/charts are
 cited, not rebuilt; placeholder geometry is computed in the safe area rather than copying bespoke
