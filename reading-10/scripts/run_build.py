@@ -4,11 +4,25 @@
 The verbs are safe to re-run and the process exit code is always 0; problems are
 recorded in result.json rather than signalled. The work itself lives in reading_core.py.
 """
-import argparse, sys, traceback
+import argparse, os, sys, time, traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import reading_core as C
+
+try:  # the v1.1.0 finalize-time asset layer; missing modules fall back to v1.0.0
+    import bench_assets as ASSETS
+except Exception:  # pragma: no cover - defensive import guard
+    ASSETS = None
+
+EVENTS = []
+
+
+def note(stage, **kv):
+    """Record one real build event for run.log (timestamps live only there)."""
+    row = {"stage": stage, "t": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "elapsed": round(time.time() - C.T_START, 3)}
+    row.update({k: v for k, v in kv.items() if v is not None})
+    EVENTS.append(row)
 
 
 def finalize_result(doc, stage):
@@ -217,10 +231,12 @@ def op_audit(a):
 
 
 def op_build(a):
-    pack, _ = C.read_case_pack(C.IN_DIR)
+    pack, case_path = C.read_case_pack(C.IN_DIR)
     doc, contract = C.bootstrap("build", pack)
     case_key = str(C.deep_find(pack, C.ID_KEYS) or "") or None
+    note("build_start", case_id=case_key, input=str(C.IN_DIR), output=str(C.OUT_DIR))
     index = C.load_or_index(doc)
+    note("index_loaded", materials=len(index.get("materials") or []), paragraphs=index.get("n_paragraphs"))
     c = C.build_corpus(index)
     if "_bad_json" in pack:
         doc["errors"].append({"stage": "case", "error": "case.json invalid: " + pack["_bad_json"]})
@@ -233,6 +249,7 @@ def op_build(a):
         audit = C.audit_items(draft, c)
         items, rejected, issues = audit["items"], audit["rejected"], audit["issues"]
         print("draft %s | accepted=%d rejected=%d problems=%d"% (path.name, len(items), len(rejected), len(issues)))
+    note("draft_audit", mode=origin, accepted=len(items), rejected=len(rejected), problems=len(issues))
     if not items or rejected:
         origin = "fallback_minimal" if not items else "agent_authored_with_fallback"
         for raw in minimal_items(index, 6 if not items else 2):
@@ -309,13 +326,58 @@ def op_build(a):
     doc["uncertainty"] = open_questions
     doc["runtime"].update({"materials": len(index["materials"]), "paragraphs": index["n_paragraphs"],
                            "n_items": len(items), "mode": origin})
+    note("products_ready", cards=len(items), anchors=len(anchor_rows), points=len(points),
+         n2=totals["n2"], n1=totals["n1"], n0=totals["n0"])
     finalize_result(doc, "build")
     passed = self_audit(doc, index, anchor_rows, items, sc_items, totals, points, contract)
+    note("self_audit", passed=self_passed(doc), total=self_total(doc), ok=bool(passed))
+    asset_keys = None
+    if ASSETS is not None:
+        raw_case = C.read_text(case_path)[0] if case_path else ""
+        ctx = {"out_dir": str(C.OUT_DIR), "work_dir": str(C.WORK_DIR), "in_dir": str(C.IN_DIR),
+               "pkg_root": str(Path(__file__).resolve().parent.parent), "case_path": str(case_path) if case_path else None,
+               "raw_case": raw_case, "pack": pack, "contract": contract, "index": index,
+               "events": EVENTS, "doc": doc, "t_start": C.T_START, "skill_version": C.VER,
+               "case_id": case_key, "state": state, "origin": origin,
+               "draft_path": str(path) if path else None, "rejected": rejected, "issues": issues}
+        try:
+            emitted = ASSETS.emit(C.OUT_DIR, ctx)
+            if emitted:
+                asset_keys = emitted.get("result_keys") or {}
+                doc.update(asset_keys)
+                facts = emitted.get("facts") or {}
+                note("finalize_assets", assets=len([k for k in facts if k in
+                                                   ("golden", "diff", "version", "log", "self")]),
+                     self_check_ok=(facts.get("self") or {}).get("ok"))
+        except Exception as e:  # never break the five primary products for an asset problem
+            print("! asset layer failed: %s" % e)
+            traceback.print_exc(limit=3)
+            doc["degradations"].append({"item": "assets", "issue": str(e)[:300],
+                                        "action": "kept the v1.0.0 five-product path, exit code still 0"})
+    else:
+        doc["degradations"].append({"item": "assets", "issue": "asset modules not importable",
+                                    "action": "kept the v1.0.0 five-product path"})
+        note("assets_unavailable")
     finalize_result(doc, "build")
     print("mode=%s items=%d points=%d anchors=%d verified=%d | status=%s"
           % (origin, len(items), len(points), len(anchor_rows), totals["n_anchors_verified"], state))
     print("wrote benchmark.json anchors.json scoring.json report.md result.json | SELF-AUDIT %s"
           % ("PASS" if passed else "ATTENTION"))
+    if asset_keys:
+        gs = asset_keys.get("golden_standard") or {}
+        sc = asset_keys.get("self_check") or {}
+        print("[assets] golden items=%s met=%s deviation=%s missing=%s quotes=%s | 5 assets written | "
+              "SELF-CHECK %s (%s/%s)"
+              % (gs.get("items"), gs.get("met"), gs.get("deviation"), gs.get("missing"), gs.get("quotes"),
+                 "PASS" if sc.get("ok") else "ATTENTION", sc.get("checks_passed"), sc.get("checks_total")))
+
+
+def self_passed(doc):
+    return (doc.get("runtime") or {}).get("self_audit", {}).get("passed", 0)
+
+
+def self_total(doc):
+    return (doc.get("runtime") or {}).get("self_audit", {}).get("total", 0)
 
 
 def _path_flags():
