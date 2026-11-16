@@ -5,9 +5,9 @@ word-pack loading, plus the validation command line used to inspect a delivery."
 import argparse, csv, hashlib, json, re, sys, unicodedata
 from pathlib import Path
 
-KVER = "1.0.0"; AVER = "1.0.0"
+KVER = "1.1.0"; AVER = "1.0.0"
 SET5 = ("golden_standard.json", "diff_report.md", "version_history.md", "run.log", "self_check.json")
-ADDFIELDS = ("golden_standard", "diff_report", "version_history", "self_check")
+ADDFIELDS = ("golden_standard", "diff_report", "version_history", "run_log", "self_check")
 NUMRX = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)")
 REJECTRX = re.compile(r"(as an ai|i cannot|i can't|unable to (help|comply)|无法(完成|提供)|抱歉[，,]?我(不能|无法)|作为一个?AI)", re.I)
 SOFTWORD = re.compile(r"(流畅|清晰|合理|完整|学术性|well[- ]written|clear and logical)")
