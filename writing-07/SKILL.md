@@ -155,6 +155,27 @@ delivered file, counting heading blocks. Any Markdown viewer can therefore
 recount the blocks; page numbers and editor line numbers are deliberately not
 used because they do not survive a change of tool.
 
+## Verifiable assets (v1.0.0)
+
+Every build or finalize run also writes five additive evidence files next to the
+deliverables. They are a side channel: the original entry points, CLI options and
+result fields are unchanged, and `result.json` gains one summary per asset
+(`golden_standard`, `diff_report`, `version_history`, `run_log`, `self_check`).
+
+| File | What it proves | How to re-check |
+|---|---|---|
+| `golden_standard.json` | expected response/edit items, each with a source locator and a verbatim quote from the supplied materials, derived from `output_contract`, the organizer workorder and the review comments (`basis: contract` when there is no material source) | every `source.quote` is a literal substring of the named input file (`quote_verbatim`); `quote_block` gives its `B###` block |
+| `diff_report.md` | the golden standard vs this run, item by item (met / deviation / missing, with the reason) | read the summary table and open the cited `P###` / `B###` / `case.json#…` locator |
+| `version_history.md` | static evolution v0 skeleton → v1.0.0 (what changed, why, how to roll back) plus a section for this run | compare the run section with `result.json.counts` |
+| `run.log` | real phase log: each phase, elapsed seconds, artifact count, degradations, exceptions and the exit code | walk the phase lines against the files in the output directory |
+| `self_check.json` | machine receipt: contract-key completeness, main-artifact presence, verbatim-quote hit rate, counter consistency, empty/bad-JSON fallback probe and exit-code policy | every check carries `ok` plus the observed values; `failed` lists any red item |
+
+The assets are written by `scripts/evidence_assets.py` (rendering in
+`scripts/evidence_render.py`) from the same finalize step that writes
+`result.json`. They are produced even when the input is empty or malformed
+(status `input_error` / `insufficient_evidence`), and a failure in this side
+channel is recorded in `issues` without changing the exit code.
+
 ## result.json expectations
 
 - Every key of the input `output_contract` must be backfilled at the top level
@@ -263,6 +284,8 @@ sub-requirements stay open. These numbers demonstrate the interface only.
 SKILL.md                         metadata and this document
 scripts/build_revision.py        input discovery, block/comment parsing, edit application, locator checks
 scripts/audit_bundle.py          ledger construction, letter rendering, bundle assembly and audit (also standalone CLI)
+scripts/evidence_assets.py       five verifiable assets: golden standard, self-check receipt and emitter
+scripts/evidence_render.py       version ledger, run-log writer and golden-vs-actual diff report
 references/comment_taxonomy.json comment categories, request cues, forbidden-claim patterns, decision and evidence rules
 references/reply_frames.json     four-register reply frames in Chinese and English
 references/handbook.md           plan schema, locator rules, field dictionary, reuse and self-check guide
@@ -275,4 +298,5 @@ references/handbook.md           plan schema, locator rules, field dictionary, r
 - To change letter wording or register style, edit
   `references/reply_frames.json` only.
 - After touching either script, rerun the audit above plus one minimal-fixture
-  regression.
+  regression. After touching the asset layer, also confirm the five evidence
+  files exist and `self_check.json.ok` is true in the output directory.
