@@ -19,6 +19,10 @@ ALIASES = {
     'version_history': ('version_history', 'versionhistory', 'versions', 'changelog'),
     'export_check': ('export_check', 'exportcheck', 'rendercheck', 'exportrendercheck'),
     'template_check': ('template_check', 'templatecheck', 'templateinheritancecheck'),
+    'format_compliance': ('format_compliance', 'formatcompliance', 'formatcheck',
+                          'formatcompliancecheck', 'formatspec'),
+    'self_check': ('self_check', 'selfcheck', 'finalcheck', 'selfcheckreport'),
+    'run_log': ('run_log', 'runlog', 'executionlog', 'log'),
 }
 NORMALISED_ALIASES = {
     field: [re.sub(r'[^a-z]', '', name) for name in (field,) + spellings]
