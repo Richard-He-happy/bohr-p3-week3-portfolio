@@ -95,11 +95,11 @@ anchors/annotations/qa/record 四份 JSON，HTML 本身就是数据容器，可�
 
 | 文件 | 结构 |
 |---|---|
-| `golden_standard.json` | `golden@1`；`items[]` 每项有 id、类别、要求、期望值、定位器、逐字引文、检查方式、状态 |
+| `golden_standard.json` | `golden@1`；`items[]` 每项有 id、类别、要求、期望值、定位器、逐字引文、检查方式、状态；`output_contract` 键逐键登记，问答/批注/锚点/选区逐项带 locator |
 | `diff_report.md` | 总览计数、逐项对照（含复核位置）、未达标清单 |
-| `version_history.md` | 资产版本谱系、差异（字节与 sha256）、回退步骤 |
+| `version_history.md` | 静态谱系 v0 → v1.0.0、文件字节与 sha256、回退步骤，末尾运行时追加本次运行段 |
 | `run.log` | `runlog@1`；步骤时间线、材料哈希、降级、异常、待人工、校验摘要 |
 | `self_check.json` | `selfcheck@1`；`checks[]`、`probes[]`、`counts`、`overall` |
 
-`result.json` 顶层会再挂这四个同名摘要对象（路径、哈希、字节数、计数或判定），并额外记录
-`runtime.augment`（资产版本、自检结论、差异判定）。它们与业务字段并存，不改名。
+`result.json` 顶层会再挂这五个同名摘要对象（路径、哈希、字节数，`run.log` 另记步骤数与错误/降级条数），
+并额外记录 `runtime.augment`（资产版本、自检结论、差异判定）。它们与业务字段并存，不改名。
