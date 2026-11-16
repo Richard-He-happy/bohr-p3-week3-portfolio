@@ -54,8 +54,16 @@ DECISION_SET = tuple(TONE_MAP)
 FRAME_KEYS = {"accept": "agree_all", "partial": "agree_partial", "reject": "hold_original",
               "clarify": "clarify_reading", "invalid": "factual_mismatch"}
 
+try:
+    import evidence_assets as evidence
+    ASSET_FILES = list(evidence.ASSET_FILES)
+except Exception:
+    evidence = None
+    ASSET_FILES = ["golden_standard.json", "diff_report.md", "version_history.md",
+                   "run.log", "self_check.json"]
+
 MUST_HAVE = ["response_letter.md", "comment_ledger.json", "change_locator.json",
-             "evidence_pending.md", "pending_human.json", "result.json"]
+             "evidence_pending.md", "pending_human.json", "result.json"] + ASSET_FILES
 
 
 
@@ -211,7 +219,7 @@ def inspect(text, led, chs, contract=None, result=None, files=None, letter_text=
 
 
 def publish(out, cid, dn, con, ctx, st, E, D, I, P, U, led, chs, rtext, stage,
-         bn, cn, lang, pres, ev, case=None, plan=None, allsub=None, applied=None):
+         bn, cn, lang, pres, ev, case=None, plan=None, allsub=None, applied=None, sources=None):
     """Emit every deliverable, inspect the finished bundle, then write result.json."""
     out = Path(out)
     allsub = allsub if allsub is not None else [s for c in led for s in c.get("sub_requirements") or []]
@@ -272,7 +280,9 @@ def publish(out, cid, dn, con, ctx, st, E, D, I, P, U, led, chs, rtext, stage,
     res.update({
         "skill": {"name": "rebuttal-response-workbench", "version": TOOL_VERSION},
         "stage": stage, "deliverable": ctx.get("deliverable"),
-        "outputs": {p.name: p.stat().st_size for p in sorted(out.glob("*")) if p.is_file()},
+        "preserved_facts": ctx.get("preserved_facts"), "evidence_map": ctx.get("evidence_map"),
+        "change_log": ctx.get("change_log"),
+        "outputs": {},
         "counts": counts,
         "comment_ledger_summary": [{"comment_id": c.get("comment_id"), "decision": c.get("decision"),
                                     "tone": c.get("tone"),
@@ -288,9 +298,35 @@ def publish(out, cid, dn, con, ctx, st, E, D, I, P, U, led, chs, rtext, stage,
         "uncertainty": U, "pending_human": P, "errors": E,
         "degradations": D, "issues": I[:50], "changes": chs,
         "runtime": {"version": TOOL_VERSION, "python": sys.version.split()[0], "stage": stage}})
+    dump_json(out / "result.json", res)          # contract-complete placeholder, overwritten below
+    payload = {"case_id": cid, "case": case if isinstance(case, dict) else {},
+               "contract": con if isinstance(con, dict) else {}, "result": res, "led": led,
+               "changes": chs, "deliverable": dn, "status": st, "counts": counts,
+               "workorder_report": wo, "issues": I, "degradations": D, "pending_human": P,
+               "errors": E, "stage": stage, "lang": lang,
+               "sources": sources if isinstance(sources, dict) else {}}
+    if evidence:
+        try:
+            payload["_asset_summary"] = evidence.emit_assets(out, payload)
+        except Exception as exc:
+            I.append({"kind": "assets_failed", "detail": "%s: %s" % (type(exc).__name__, exc)})
+    else:
+        I.append({"kind": "assets_missing", "detail": "evidence_assets.py not importable; five verifiable assets skipped"})
+    res["outputs"] = {p.name: p.stat().st_size for p in sorted(out.glob("*")) if p.is_file()}
     res["verification"] = inspect(rtext, led, chs, con if isinstance(con, dict) else None, res,
                                 [p.name for p in out.glob("*") if p.is_file()],
                                 letter_text=slurp(out / "response_letter.md"))
+    if evidence:
+        try:
+            evidence.finalize_assets(out, payload, res, payload.get("_asset_summary"))
+        except Exception as exc:
+            I.append({"kind": "assets_finalize_failed", "detail": "%s: %s" % (type(exc).__name__, exc)})
+    _asset_keys = {"golden_standard.json": "golden_standard", "diff_report.md": "diff_report",
+                   "version_history.md": "version_history", "run.log": "run_log",
+                   "self_check.json": "self_check"}
+    for _f in ASSET_FILES:
+        res.setdefault(_asset_keys.get(_f, _f.split(".")[0]), {"status": "missing"})
+    res["issues"] = I[:50]
     dump_json(out / "result.json", res)
     return 0
 
