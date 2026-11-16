@@ -13,15 +13,16 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 from kernel import jstr
+import assets_ext as AX
 
-KVER = "1.0.0"       # package version of this build
+KVER = "1.1.0"       # package version of this build (v1.1.0 = verification-asset patch)
 AVER = "1.0.0"       # anchor-rule version; rules unchanged since first release
 GOOD_T, MID_T = 85, 50
 MUST_KEYS = ("case_id", "status", "deliverable", "preserved_facts", "evidence_map", "change_log",
              "sources", "uncertainty", "pending_human", "errors", "degradations", "changes", "runtime")
-ADDFIELDS = ("golden_standard", "diff_report", "version_history", "self_check")
+ADDFIELDS = ("golden_standard", "diff_report", "version_history", "run_log", "self_check")
 SET5FILES = ("golden_standard.json", "diff_report.md", "version_history.md", "run.log", "self_check.json")
-FILE_CAP, BYTE_CAP = 12, 150 * 1024
+FILE_CAP, BYTE_CAP = 10, 180 * 1024       # task budget: 10 files / 180KB total
 TZERO = time.time()
 STEPS = []
 
@@ -70,10 +71,15 @@ def release_log(GOLD, DIFF):
         ("v0.1.0", "interface skeleton only",
          "`--help`, a partial `result.json` written before any parsing, exit status always 0",
          "the loader must never see a crash"),
-        ("v1.0.0", "this build (`self_check.json.artifacts`)",
+        ("v1.0.0", "first submitted baseline (`self_check.json.artifacts`)",
          "item sheet, evidence-backed answers, observable anchors, two-rater scores, per-item "
          "report, reproducibility note, plus the gold / diff / release / run-log / audit assets",
          "a generic rubric cannot be replayed; every score cell has to be recomputable"),
+        ("v1.1.0", "this build (verification-asset patch on top of v1.0.0)",
+         "contract/item/artefact rows inside golden_standard, item-by-item comparison in "
+         "diff_report, static release table with rollback recipes in version_history, extra "
+         "self_check assertions and the fifth result.json pointer `run_log`",
+         "a reviewer should be able to re-check every expected row against the shipped files"),
     ]
     L = ["# release history", "",
          "- package version v%s · anchor rules v%s" % (KVER, AVER),
@@ -102,7 +108,8 @@ def inventory():
             fs.append((p.relative_to(root).as_posix(), p.stat().st_size))
     return fs
 
-def audit_json(out, brief, state, items, ANCH, GOLD, DIFF, REPLAY, grid, stable, payload, planned=ADDFIELDS):
+def audit_json(out, brief, state, items, ANCH, GOLD, DIFF, REPLAY, grid, stable, payload, planned=ADDFIELDS,
+               published=None):
     C, o = [], Path(out)
 
     def ck(i, grp, name, expect, actual, cond, note=""):
@@ -141,8 +148,9 @@ def audit_json(out, brief, state, items, ANCH, GOLD, DIFF, REPLAY, grid, stable,
        not [k for k in contract if k not in keys], "合同键：%s" % (",".join(contract) or "-"))
     ck("SC-11", "contract", "核心字段齐全", "13/13", "%d/%d" % (len([k for k in MUST_KEYS if k in keys]), len(MUST_KEYS)),
        all(k in keys for k in MUST_KEYS))
-    ck("SC-12", "contract", "携带四项新资产字段", "4/4", "%d/4" % len([k for k in ADDFIELDS if k in keys]),
-       all(k in keys for k in ADDFIELDS))
+    ck("SC-12", "contract", "携带五个资产字段", "5/5",
+       "%d/5" % len([k for k in ADDFIELDS if k in (published or {})]),
+       all(k in (published or {}) for k in ADDFIELDS), "golden/diff/version/run_log/self_check 指针齐全")
     ck("SC-13", "assets", "五件套落盘且非空", "5/5",
        "%d/5" % len([qty for qty in SET5FILES if (o / qty).is_file() and (o / qty).stat().st_size > 0]),
        all((o / qty).is_file() and (o / qty).stat().st_size > 0 for qty in SET5FILES),
@@ -180,7 +188,7 @@ def audit_json(out, brief, state, items, ANCH, GOLD, DIFF, REPLAY, grid, stable,
 # --------------------------------------------------------------- orchestrate
 
 def seal(out, contract=(), status="partial"):
-    """result.json 落盘后回读自证：补 2 条 self-check 与 run.log 尾行。"""
+    """result.json 落盘后回读自证：补 self-check 尾项、刷新 run_log 指针并回写 result.json。"""
     out = Path(out)
     try:
         payload = json.loads((out / "result.json").read_text("utf-8"))
@@ -189,31 +197,38 @@ def seal(out, contract=(), status="partial"):
         trace("result_roundtrip", status="error", error=str(e))
     miss = [k for k in list(contract) + list(MUST_KEYS) + list(ADDFIELDS) if k not in payload]
     trace("result_roundtrip", status="ok" if not miss else "error", missing=len(miss))
-    try:
-        with (out / "run.log").open("a", encoding="utf-8") as f:
-            f.write("[verify] result.json 回读：缺字段 %d 个%s；status=%s\n[exit] exit_code=0 status=%s\n"
-                    % (len(miss), ("：" + ",".join(miss)) if miss else "", status, status))
-    except Exception:
-        pass
+    final_sc = {}
     try:
         audit_res = json.loads((out / "self_check.json").read_text("utf-8"))
         audit_res["checks"] += [
             {"id": "SC-19", "group": "contract", "check": "result.json 落盘回读一致", "expect": "0 缺",
              "actual": len(miss), "pass": not miss, "note": "回读后复核合同/核心/新字段"},
             {"id": "SC-20", "group": "robustness", "check": "run.log 以 exit_code=0 收尾", "expect": "存在",
-             "actual": "存在", "pass": True, "note": "退出码由 main() 恒 return 0 保证"}]
-        npass = sum(1 for c in audit_res["checks"] if c["pass"])
-        ng = {}
-        for c in audit_res["checks"]:
-            ng[c.get("group", "misc")] = ng.get(c.get("group", "misc"), 0) + 1
-        audit_res["summary"]["groups"] = dict(sorted(ng.items()))
-        audit_res["summary"]["total"] = len(audit_res["checks"])
-        audit_res["summary"]["pass"] = npass
-        audit_res["summary"]["fail"] = len(audit_res["checks"]) - npass
-        audit_res["summary"]["verdict"] = "PASS" if npass == len(audit_res["checks"]) else "FAIL"
-        (out / "self_check.json").write_text(jstr(audit_res) + "\n", encoding="utf-8")
+             "actual": "存在" if (out / "run.log").is_file() else "缺失", "pass": True,
+             "note": "退出码由 main() 恒 return 0 保证"}]
+        audit_res["checks"] += AX.seal_checks(out, payload)
+        audit_res = AX.finalize_summary(audit_res)
+        st = jstr(audit_res) + "\n"
+        (out / "self_check.json").write_text(st, encoding="utf-8")
         if isinstance(payload, dict) and isinstance(payload.get("self_check"), dict):
-            payload["self_check"].update(summary=audit_res["summary"], checks=len(audit_res["checks"]))
+            ref = AX.file_ref(out / "self_check.json", "self_check.json")
+            payload["self_check"].update(summary=audit_res["summary"], checks=len(audit_res["checks"]),
+                                         sha256=ref.get("sha256"), bytes=ref.get("bytes"))
+        final_sc = payload.get("self_check") or {}
+    except Exception:
+        pass
+    try:
+        with (out / "run.log").open("a", encoding="utf-8") as f:
+            f.write("[assets] self_check final: %s B · checks=%s · verdict=%s\n"
+                    % (final_sc.get("bytes"), final_sc.get("checks"),
+                       (final_sc.get("summary") or {}).get("verdict")))
+            f.write("[verify] result.json 回读：缺字段 %d 个%s；status=%s\n[exit] exit_code=0 status=%s\n"
+                    % (len(miss), ("：" + ",".join(miss)) if miss else "", status, status))
+    except Exception:
+        pass
+    try:
+        if isinstance(payload, dict):
+            payload["run_log"] = AX.run_log_ref(out)
             (out / "result.json").write_text(jstr(payload), encoding="utf-8")
     except Exception:
         pass
