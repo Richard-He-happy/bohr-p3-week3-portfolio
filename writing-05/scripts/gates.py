@@ -273,14 +273,14 @@ class Audit:
           conf="medium", pp=len(pool[:8]))
       return
     down = toks(self.joined(("result", "discussion", "conclusion")) or self.text)
-    keys = [t for t in toks(sentence) if len(t) > 4][:10]
+    keys = sorted([t for t in toks(sentence) if len(t) > 4])[:10]
     miss = [t for t in keys if t not in down]
     if keys and len(miss) >= max(3, int(0.5 * len(keys))):
       self.rec("research_question_alignment", "high", loc, sentence, "RQ2", "narrow",
           conf="medium", terms=", ".join(keys), t=len(keys), k=len(miss), miss=", ".join(miss[:6]))
     cloc, claim = self.first(pool[:6], "contribution")
     if claim and len(claim) > 40:
-      ck = [t for t in toks(claim) if len(t) > 4][:8]
+      ck = sorted([t for t in toks(claim) if len(t) > 4])[:8]
       lost = [t for t in ck if t not in down]
       if ck and len(lost) >= max(3, int(0.6 * len(ck))):
         self.rec("research_question_alignment", "medium", cloc, claim, "RQ3", "narrow",
@@ -573,7 +573,7 @@ def contract_keys(input_dir):
     case = Path(input_dir) / "case.json"
     if not case.is_file():
       return []
-    return list((json.loads(case.read_text(encoding="utf-8")).get("output_contract") or {}))
+    return list((json.loads(case.read_text(encoding="utf-8-sig", errors="replace")).get("output_contract") or {}))
   except Exception:
     return []
 
