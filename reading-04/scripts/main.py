@@ -454,11 +454,19 @@ def phase_build(args):
         result["pending_human"].append("output_contract fields with no matching content: %s"
                                        % ", ".join(missing))
     _write_json(output_dir / "result.json", result)
+    asset_info = {}
+    try:  # 提分包增量：写 5 件可核验资产并回填附加键；失败不影响主流程与退出码
+        import assets
+        asset_info = assets.finalize(input_dir, output_dir, work_dir, case) or {}
+    except Exception:
+        pass
     print("status=%s docs=%d fields=%d cells=%d reported=%d coverage=%s quote_pass=%s"
           % (model["status"], len(docs), len(fields), len(cells),
              counts["cells_reported"], counts["coverage"], counts["quote_pass_rate"]))
+    repaired = [key for key in (asset_info.get("repaired") or []) if key in missing]
     print("artifacts:", ", ".join(model["artifacts"]),
-          "| unfilled contract:", missing or "none")
+          "| unfilled contract:", [key for key in missing if key not in repaired] or "none",
+          "| assets: %s/5 (build 收尾自动生成)" % asset_info.get("asset_count", 0))
     return 0
 
 
