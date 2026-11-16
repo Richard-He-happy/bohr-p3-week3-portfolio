@@ -12,12 +12,16 @@ on that page under that heading, unchanged, with its original numerals and units
 
 **Delivery** — unzip the deck: content types, `ppt/presentation.xml`, one slide plus one notes part per
 page, master/layout/theme parts equal to the template's. The preview PDF starts with `%PDF-`, has the
-same page count, and either the converter engine or a text-layer fallback is named in
-`export_artifact.method`.
+same page count, and names its converter or text-layer fallback in `export_artifact.method`.
 
-**Honesty** — compare `status` with `exceptions`: a degraded preview or a soft gap must not be hidden
-behind `ok`; a missing template, figure or page count must appear in `pending_human`; failed checks
-must stay `fail` in the inspection reports.
+**Honesty** — compare `status` with `exceptions`: a degraded preview or soft gap must not hide behind
+`ok`; a missing template, figure or page count appears in `pending_human`; failed checks stay `fail` in
+the inspection reports.
 
-**Repeatability** — two runs on the same input should produce the same roles, slide count, verdicts and
-contract echo; timestamps and file hashes are expected to change.
+**Repeatability** — two runs on the same input produce the same roles, slide count, verdicts and
+contract echo; timestamps and hashes are expected to change.
+
+**Artefacts** — eight files sit beside `result.json`: `page_golden.json`, `page_diff.md`,
+`version_history.md`, `run.log`, `export_check.json`, `template_check.json`, `format_compliance.json`,
+`self_check.json`; each is mirrored at the result root and `self_check.json` must be
+`overall_pass: true` with an empty `failures` list before the run is done.
