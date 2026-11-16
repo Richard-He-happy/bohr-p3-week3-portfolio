@@ -1,0 +1,38 @@
+{
+  "frames_version": "1.0.0",
+  "placeholders": {
+    "{b}": "baseline filename",
+    "{d}": "main deliverable filename",
+    "{loc}": "P### block locator",
+    "{s}": "evidence status",
+    "{n}": "evidence note"
+  },
+  "frames": {
+    "zh": {
+      "heading": "# 对审稿意见的逐条答复（草案）",
+      "scope_line": "说明：本答复信配合组织方基线 `{b}` 的受控修订演练撰写，逐条对应组织方整理的意见摘要；信中引用的文字来自该摘要，并非审稿报告的逐字原文，也未加入所给材料以外的实验、数据或文献。",
+      "agree_all": "感谢审稿人指出该问题，我们采纳并完成了相应修订。",
+      "agree_partial": "我们对该意见予以部分采纳，在现有材料能支撑的范围内完成了修订。",
+      "hold_original": "我们理解审稿人的关注点；经复核基线原文，我们保留原有表述并说明理由。",
+      "clarify_reading": "感谢审稿人提出的意见，我们就此处表述作如下澄清。",
+      "factual_mismatch": "我们需指出：该意见与基线文本的描述并不一致。",
+      "changed_block": "修改后的文字（`{d}` 第 `{loc}` 块）：",
+      "no_change_block": "该项未在本次基线修订中落实，原因见 `evidence_pending.md`。",
+      "evidence_line": "证据情况：{s}，说明：{n}",
+      "kept_anchor": "未作改动的原文位置（`{loc}`）："
+    },
+    "en": {
+      "heading": "# Point-by-Point Reply to the Comments (draft)",
+      "scope_line": "Note: this reply belongs to a controlled revision drill on the organizer baseline `{b}` and answers the organizer's comment summary item by item. Quoted wording comes from that summary, not from a verbatim referee report, and no experiment, dataset or reference beyond the supplied materials has been added.",
+      "agree_all": "We are grateful for this comment and have accepted it; the corresponding revision is in place.",
+      "agree_partial": "We accept this comment in part and have made the revisions that the supplied materials support.",
+      "hold_original": "We understand the concern; having re-checked the baseline, we keep the original wording and explain why below.",
+      "clarify_reading": "We thank the reviewer for this comment and offer the following clarification of the wording.",
+      "factual_mismatch": "We must note a factual discrepancy between this comment and the baseline text.",
+      "changed_block": "Text after revision (block `{loc}` of `{d}`):",
+      "no_change_block": "This item is not implemented in the current baseline revision; see `evidence_pending.md` for the reason.",
+      "evidence_line": "Evidence: {s}; note: {n}",
+      "kept_anchor": "Anchor left unchanged (`{loc}`):"
+    }
+  }
+}
