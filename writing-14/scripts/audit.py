@@ -20,6 +20,7 @@ from pathlib import Path
 
 import mmcore
 import golden
+import assets
 
 HERE = Path(__file__).resolve().parent
 CLI = HERE / "mindmap_cli.py"
@@ -357,7 +358,7 @@ def emit(stage, cid=None, case=None, contract=None, index=None, model=None, svg_
         note(work, out, stage, "审计开始：材料 %d 份" % len(index.get("materials") or []))
         gold = golden.build(case or {}, contract or {}, index, stage)
         wjson(out / "golden_standard.json", gold)
-        items = golden.compare(gold, model, index, stage)
+        items = golden.compare(gold, model, index, stage, slots)
         counts = golden.tally(items)
         nodes = (model or {}).get("nodes") or []
         stats = {"nodes": len(nodes), "edges": len(model.get("edges") or []) if model else 0,
@@ -406,15 +407,31 @@ def emit(stage, cid=None, case=None, contract=None, index=None, model=None, svg_
                                   "checks": check["summary"]["checks"],
                                   "failed": check["summary"]["failed"]},
                    "probes": probe_rows}
+        try:
+            asset_summary = assets.emit(out=out, work=work, cid=cid, stage=stage,
+                                        contract=contract or {}, index=index, model=model,
+                                        items=items, counts=counts, checks=check, slots=slots,
+                                        probes=probe_rows, svg_text=svg_text or "",
+                                        png_info=png_info or {}, errors=errors or [],
+                                        degradations=degradations or [], summary=summary,
+                                        mode=mode, coverage_bytes=coverage_bytes,
+                                        csv_rows=rows, pend=len(pend))
+            summary.update(asset_summary or {})
+        except Exception as exc:
+            note(work, out, stage, "可核验资产降级：%s" % exc, "ERROR")
+            summary["assets_error"] = str(exc)[:200]
+        assets.ensure(out, cid, stage)
         note(work, out, stage, "对照 达标 %d / 偏差 %d / 缺失 %d / 待定 %d；自检 %s"
              % (counts["达标"], counts["偏差"], counts["缺失"], counts["待定"],
                 "通过" if check["summary"]["pass"] else "未通过"),
              "INFO" if check["summary"]["pass"] else "WARN")
     except Exception as exc:
         note(work, out, stage, "审计降级：%s" % exc, "ERROR")
+        assets.ensure(out, cid, stage)
         summary = {"error": str(exc)[:200],
                    "self_check": {"path": None, "pass": False, "checks": 0,
                                   "failed": ["audit_failed"], "error": str(exc)[:200]}}
+    assets.ensure(out, cid, stage)
     return summary
 
 
