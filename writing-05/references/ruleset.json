@@ -1,0 +1,311 @@
+{
+  "meta": {
+    "name": "manuscript-blueprint-audit 的规则与文案台账",
+    "version": "1.0.0",
+    "note": "正则、阈值、判定依据与全部界面措辞都放在这里；scripts 只读取不内嵌。改口径改本文件，改逻辑才动脚本。"
+  },
+  "labels": {
+    "priority": {
+      "P1": "第一轮：不处理则论证立不住",
+      "P2": "第二轮：影响阅读与衔接",
+      "P3": "第三轮：只影响精细度"
+    },
+    "severity": {
+      "high": "重",
+      "medium": "中",
+      "low": "轻"
+    },
+    "coverage": {
+      "findings": "命中问题",
+      "no_issue_with_evidence": "已查未命中（附检查规模）",
+      "degraded_by_error": "规则异常，结论不可用",
+      "not_assessable": "无正文，未执行检查"
+    },
+    "dimension": {
+      "research_question_alignment": "问题与主张",
+      "section_structure": "章节布局",
+      "argument_chain": "主张—证据",
+      "paragraph_relations": "段间衔接",
+      "duplication": "内容重出",
+      "conclusion_boundary": "结论尺度"
+    },
+    "role": {
+      "introduction": "问题与背景",
+      "method": "方法与材料",
+      "result": "结果",
+      "discussion": "讨论",
+      "conclusion": "结论"
+    }
+  },
+  "thresholds": {
+    "clip_chars": 150,
+    "dup_shingle": 8,
+    "dup_paragraph": 0.3,
+    "dup_paragraph_min_words": 45,
+    "handoff_jaccard": 0.05,
+    "handoff_min_words": 55,
+    "mixed_layer_min_words": 120,
+    "claim_paragraph_min_words": 30,
+    "verbatim_sentence_min_chars": 55,
+    "bound_sentence_cap": 6,
+    "fact_cap": 25
+  },
+  "checked": {
+    "research_question_alignment": "已抽出研究问题句与贡献句，与结果／讨论／结论的词项逐一比对，未发现脱节。",
+    "section_structure": "识别出 {n} 个章节，角色完备性、章节先后与文献条目都查过，未见缺章或倒置。",
+    "argument_chain": "在 {n} 个正文段落里抽取主张句，核对引用、数值与图表指向，未见悬空判断或缺号引用。",
+    "paragraph_relations": "{n} 组相邻段落做了词项重叠与段首过渡词检查，未见断链或观测／解读混装的段落。",
+    "duplication": "{n} 组段落对做滑窗比对，最高 Jaccard 为 {v}，未过 0.30；另对 25 词以上段落逐句归一化查重，未见整句复现。",
+    "conclusion_boundary": "摘要、讨论与结论共 {n} 句，逐句查因果动词、绝对化措辞与限定语，未见越界说法。",
+    "failed": "该维度的规则在运行时抛错，没有可用结论；异常已记入 degradations，不能据此推断稿件无此问题。",
+    "absent": "输入里没有可解析的正文，本维度未做任何检查。"
+  },
+  "patterns": {
+    "cite": "(?:\\[(?:\\d+(?:\\s*[-–,]\\s*\\d+)*)\\])|(?:\\([A-Z][A-Za-z\\-]+(?: et al\\.?)?(?:,| and [A-Z][A-Za-z\\-]+)?,?\\s*(?:19|20)\\d{2}[a-z]?\\))",
+    "quantity": "\\d+(?:\\.\\d+)?\\s*(?:kDa|MHz|kHz|GPa|MPa|mol|mL|mM|nM|kV|mA|min|ms|mm|cm|km|nm|µm|μm|year|yr|bp|kb|Da|kg|mg|%|Pa|Hz|W|K|°C|L|g|h|s)\\b",
+    "figure_ref": "(?:表\\s*|图\\s*|\\b(?:Tab\\.|Table|Fig(?:ure)?s?\\.?)\\s*)(\\d+[a-zA-Z]?)",
+    "figure_caption": "(?i:^(?:表|图|tab\\.?|table|fig\\.?|figure)\\s*(\\d+))",
+    "ref_entry": "(?m:^\\s*\\[?(\\d{1,3})[\\]\\)\\.]\\s+\\S)",
+    "question": "(?i:objective of|aim of (?:this|our)|here we|hypothes|research question|this (?:study|paper|work|article) (?:examines|investigates|asks|addresses|aims|reports)|we (?:ask|examine|investigate|test|address|aim)|研究问题|本研究|本文(?:研究|探讨|提出)|我们(?:提出|考察|研究|探讨))",
+    "contribution": "(?i:主要贡献|本文(?:提出|贡献)|contribution of this|our contribution|we (?:show|demonstrate|propose|present|contribute|establish|introduce))",
+    "claim_marker": "(?i:表明|说明|因此|可见|证明|\\b(?:hence|thus|therefore|consistent with|points? to|we (?:argue|conclude|contend)|show(?:s|n)? that|suggest\\w*|indicat\\w*|demonstrat\\w*|reveal\\w*|impl\\w*)\\b)",
+    "handoff_marker": "(?i:^(?:综上|另一方面|同时|最后|其次|首先|因此|然而|此外|next|finally|third|second|first|as a result|thus|therefore|conversely|by contrast|similarly|in addition|furthermore|moreover|however))",
+    "causal": "(?i:导致|引起|决定|这是因为|\\b(?:caus\\w*|determin\\w*|drives?|leads? to|results? in|attributable to|due to|because of)\\b)",
+    "hedge": "(?i)\\b(?:may|might|could|likely|appears?|seems?|potential\\w*|suggest\\w*|consistent with|limited to|in this (?:cohort|dataset|sample|study)|does not (?:establish|prove))\\b|可能|或许|提示|尚不能|本研究范围内",
+    "absolute": "(?i)\\b(?:proven|proves|prove|conclusively|definitively|guarantee\\w*|regardless of|eliminates?|always|never|every|none of|all of the)\\b|必将|完全证明|从不|一定能|所有",
+    "association": "(?i)\\b(?:relationship between|related to|correlat\\w*|associat\\w*)\\b|关联|相关性",
+    "design": "(?i)\\b(?:difference-in-differences|instrumental variable|randomi[sz]\\w*|manipulat\\w*|ablation|knockdown|knockout|control group|intervention)\\b|随机分组|对照组|干预",
+    "head_numbered": "^(?:[0-9]+\\.)+[0-9]*\\.?\\s+\\S{2,80}$",
+    "head_upper": "^[A-Z][-– A-Z&]{5,70}$"
+  },
+  "roles": [
+    [
+      "abstract",
+      "摘\\s*要|\\babstract\\b"
+    ],
+    [
+      "introduction",
+      "前\\s*言|引\\s*言|\\bintro\\b|\\bintroduction\\b"
+    ],
+    [
+      "related",
+      "文献综述|相关工作|background|literature|related work"
+    ],
+    [
+      "method",
+      "材料与方法|方\\s*法|study design|approach|experimental|materials|methodology|\\bmethod"
+    ],
+    [
+      "result",
+      "结\\s*果|findings|\\bresults?\\b"
+    ],
+    [
+      "discussion",
+      "讨\\s*论|\\bdiscussion\\b"
+    ],
+    [
+      "conclusion",
+      "总\\s*结|结\\s*论|concluding|\\bconclusions?\\b"
+    ],
+    [
+      "references",
+      "参考文献|bibliography|references?"
+    ],
+    [
+      "ack",
+      "基金|致\\s*谢|funding|acknowledg"
+    ],
+    [
+      "appendix",
+      "补充材料|附\\s*录|supplement|appendix"
+    ]
+  ],
+  "diagnosis": {
+    "RQ1": "在可检索的范围内，没有任何一句承担研究问题陈述的职责；后面的方法与结果因此缺少被回答的对象。",
+    "RQ2": "研究问题里出现过的核心概念，到结果、讨论、结论中就不再露面：开头问的与结尾答的不是同一件事。",
+    "RQ3": "贡献句承诺的内容在结果部分找不到对应证据，写出的贡献大于实际做出来的工作。",
+    "SEC1": "全篇找不到一处可作为边界使用的标题行，从第一句到最后一句连成一片：问题、方法、结果挤在同一层，信息按什么次序展开看不出来。",
+    "SEC2": "稿件缺少该承担「{label}」职责的一节：最后一个可见段落之后没有接续「{label}」的内容，这部分论证没有落脚处。",
+    "SEC3": "章节排布把「{b}」放在「{a}」之前：读者先读到{b}才知道{a}，问题—方法—结果—解释的推进次序被打乱。",
+    "SEC5": "稿件有参考文献部分，但其中没有任何一条带序号的条目，正文的引用记号无处可归。",
+    "ARG1": "这一段抛出了需要证据支撑的判断，段内却没有引用、数值或图表可以指认：判断悬在空中，第三方无法回查依据。",
+    "ARG2": "正文出现 [{n}] 这个引用记号，文献表里没有对应的条目，出处链断在这里。",
+    "ARG3": "正文提到图表 {lab}，全篇找不到与之对应的图题或表题，这条论据没有实体可以核对。",
+    "PAR1": "{b} 与紧挨其前的 {a} 用词几乎不重合，段首也没有承接话头：两段之间的逻辑关系要读者自己补出来。",
+    "PAR2": "同一段里既有已经报出的数字，又有对这些数字的解释：观测与推论叠在一处，读者分不清哪句是记录、哪句是解读。",
+    "DUP1": "{a} 与 {b} 说的是同一件事（{kind}复述）：同一内容占了两处位置，读者不知道哪一处才是主论述。",
+    "DUP2": "{a} 与 {b} 出现了完全相同的句子：后一处没有带来任何新信息。",
+    "BND1": "结论句用了表示因果方向的动词，可是方法与结果只给出相关关系，也没有干预、随机化或对照组：这句话说得比数据能撑住的范围更远。",
+    "BND2": "结论句使用不留余地的措辞，又没有附加任何条件，读者会把它读成在任何情况下都成立。",
+    "BND3": "结论里出现了一个结果部分从未报出的带单位数值，这个数字在稿件内部找不到来源。"
+  },
+  "basis": {
+    "RQ1": "在开头段、摘要段与引言段合计 {pp} 段里按研究问题句式检索（本文研究／我们考察／aim of／hypothes 等），未命中任何一句。",
+    "RQ2": "研究问题抽出 {t} 个关键词（{terms}），其中 {k} 个（{miss}）在结果、讨论与结论里都没有出现。",
+    "RQ3": "贡献句抽出 {t} 个关键词（{terms}），其中 {k} 个在结果部分没有出现。",
+    "SEC1": "切分结果为 {ch} 个章节块、{pp} 个段落；井号标题、编号标题、规范章节名三类模式全部未命中。",
+    "SEC2": "已识别的角色集合是 {present}，其中没有 {role}；全篇段落数为 {pp}。",
+    "SEC3": "章节序列为 {seq}；本次拟搬动 {cl}，目标落点 {ce}。",
+    "SEC5": "对参考文献部分逐行检索「行首编号条目」写法，命中 0 条。",
+    "ARG1": "该段 {n} 句，带主张标记的 {c} 句，带引用／数值／图表指向的 0 句，且段落词数达到门槛。",
+    "ARG2": "正文出现的引用编号共 {u} 个，文献表条目 {r} 条，缺失编号为 {bad}。",
+    "ARG3": "正文引用的图表编号集合为 {ref}，检索到的图题／表题为 {cap}。",
+    "PAR1": "相邻两段词项 Jaccard={v}（门槛 0.05）；后段首句未命中过渡词表；前段 {wa} 词、后段 {wb} 词。",
+    "PAR2": "该段 {w} 词，数值句 {nn} 句、主张句 {nc} 句，满足分层拆段检查条件。",
+    "DUP1": "以 {shingle} 词滑窗构造集合比较，Jaccard={v}（门槛 0.30），对象为 {a} 与 {b}。",
+    "DUP2": "去掉空白与标点并统一小写后，两条句子逐字相同，长度 {n} 字符，共出现 {k} 次。",
+    "BND1": "该句含因果动词；方法／结果部分命中相关关系词（{terms}），未命中干预、随机化或对照组设计。",
+    "BND2": "该句命中绝对化词表（{terms}），且没有任何限定或概率措辞。",
+    "BND3": "结论句中带单位的数值为 {vals}，在方法、结果与摘要中均未出现。"
+  },
+  "effect": {
+    "RQ1": "在该段补一句明确的研究问题（限定在现有材料能回答的范围内），并让方法与结果对齐它。",
+    "RQ2": "把研究问题收缩到结果部分真正报告过的变量，或在结果／结论处用相同措辞回扣。",
+    "RQ3": "把贡献主张改写成结果部分实际覆盖的范围。",
+    "SEC1": "补齐 Abstract、Introduction、Methods、Results、Discussion、Conclusion 一类标题，让全文有可定位的骨架。",
+    "SEC2": "在最后一段之后新起一节「{label}」，把散落在其他段落、属于该职责的内容收进来。",
+    "SEC3": "把 {cl} 整章搬到 {ce} 之后，恢复 问题→方法→结果→解释 的阅读顺序。",
+    "SEC5": "按正文出现顺序补上编号条目，或把没有条目的引用记号撤掉。",
+    "ARG1": "在该判断之后补上可指认的论据（编号引用、统计量或图表号），或把判断降级为推测。",
+    "ARG2": "补上 [{n}] 对应的文献条目，或把这一处引用记号撤回。",
+    "ARG3": "补上图表 {lab}，或改引已有图号。",
+    "PAR1": "在 {b} 开头加一句承接，接住 {a} 的结论，或点明两者的差异。",
+    "PAR2": "在第一个解释句之前断开：前段只放数字，后段放解读与归因。",
+    "DUP1": "把 {b} 的重复内容并进 {a}，保留信息更全的一处，另一处改成回指。",
+    "DUP2": "删掉 {b} 处的重复句，改成指向首次出现的 {a}。",
+    "BND1": "把因果方向的说法换成相关关系说法（associated with / 与…相关），保留原有观测结果。",
+    "BND2": "补上适用范围（样本、条件或概率），把绝对化说法缩成有条件说法。",
+    "BND3": "把该数值改为引用结果部分已报出的值，或去掉精确数字只保留方向。"
+  },
+  "hazard": {
+    "RQ1": "研究问题的措辞要靠作者定，本 Skill 不代拟科学主张。",
+    "RQ2": "收缩研究问题会改动论文定位，由作者决定。",
+    "RQ3": "涉及作者如何界定自己的贡献，需作者确认。",
+    "SEC1": "补标题会改变段落归属，切分点需要作者确认。",
+    "SEC2": "新增章节会牵动后续编号与交叉引用，落点需作者确认。",
+    "SEC3": "整章搬家会改动全篇编号与所有交叉引用，需统一重排。",
+    "SEC5": "条目内容只能由作者提供，本 Skill 不生成文献。",
+    "ARG1": "补进去的论据必须是作者手上已有的材料，本 Skill 不造数据。",
+    "ARG2": "文献内容需作者提供。",
+    "ARG3": "缺失的图表需作者提供。",
+    "PAR1": "过渡句的语域要与作者一致。",
+    "PAR2": "断句位置若不符合作者原意，会把原有论证切开。",
+    "DUP1": "两段若各有独有信息，合并会漏内容，需逐句核对。",
+    "DUP2": "删之前要确认这一句在第二处是否承担了新的语境。",
+    "BND1": "若作者确实做过因果设计，应在方法部分补设计，而不是改结论。",
+    "BND2": "限定的具体取值必须落在作者数据范围内。",
+    "BND3": "需确认该数值是否来自未随稿提供的补充材料。"
+  },
+  "default_effect": {
+    "research_question_alignment": "把研究问题或贡献主张收缩到实际覆盖的对象，并在结果／结论处显式回扣。",
+    "section_structure": "调整章节先后或补齐缺节，让 问题→方法→结果→解释 的推进成立。",
+    "argument_chain": "在该判断处补上可指认的论据，或把判断收缩到已有论据能支持的范围。",
+    "paragraph_relations": "按论点边界断开段落，或补入过渡让相邻段的关系显式。",
+    "duplication": "合并后只留一处主论述，另一处改为回指，减少重复阅读。",
+    "conclusion_boundary": "把结论收缩到数据与实验条件允许的范围，并补出限制说明。"
+  },
+  "default_hazard": {
+    "move": "搬动会改动编号与交叉引用，需统一重排。",
+    "merge": "合并可能丢掉某一段的独有信息。",
+    "split": "断点若与作者意图不符，会把原有论证切开。",
+    "narrow": "收缩表述会削弱结论强度，可接受范围需作者确认。",
+    "delete": "删除前要确认该内容在别处没有独有信息。",
+    "insert": "新增内容必须由作者提供事实，本 Skill 不代写。"
+  },
+  "pending": {
+    "PD_NO_TEXT": "输入里没有可解析的正文（PDF 可能是扫描件，或材料只有图表）。",
+    "PD_NO_TEXT_N": "请提供 md／txt／docx 稿件，或提供带文本层的 PDF。",
+    "PD_MULTI": "输入含 {n} 个可解析文本，已取最长的一份（{name}）作为稿件。",
+    "PD_MULTI_N": "若选错稿件，请指明文件名后重跑。",
+    "PD_TRUNC": "稿件末字符不是句末标点，疑似被截断（当前 {n} 字符）。",
+    "PD_TRUNC_N": "请确认稿件是否完整；截断情况下的缺章判断已降为待确认。",
+    "PD_TRUNC_DIM": "未检出「{label}」一节，但稿件末尾不完整，无法区分是真缺还是被截断。",
+    "PD_TRUNC_DIM_N": "补齐稿件尾部后重跑，或由作者确认本稿本来就没有该节。",
+    "PD_SHORT": "可解析的正文过短（{w} 词、{p} 段），做不了章节级结构诊断。",
+    "PD_SHORT_N": "请确认这是不是提纲或占位文本；若为提纲，请补正文后重跑。",
+    "PD_NO_RQ": "未检出研究问题句，且全文过短，无法判断是否存在研究问题。",
+    "PD_NO_RQ_N": "请作者指明研究问题所在的位置。",
+    "PD_NOREF": "正文有引用记号，但全文找不到可解析的文献列表（涉及 {n} 个编号）。",
+    "PD_NOREF_N": "请提供文献列表或说明引用方式，否则引用链无法核验。",
+    "PD_UNKNOWN_KEY": "output_contract 的字段 {key} 在产物里没有同名来源，已置空并在此说明。"
+  },
+  "notes": {
+    "GROUND": "每条 finding 的 quote 必须是正文的逐字子串（空白归一化后），并回填字符区间。",
+    "PF": "原文逐字保留；本 Skill 不改写、不新增任何数值。",
+    "ARGMAP": "逐句抽取主张标记句与论据句（引用／数值／图表指向），按段落配对；配不上即 unsupported。",
+    "ROUNDS": "按每条动作一处定位修改、每轮处理 6 条估算，用于对照返工轮次，不是实测值。",
+    "CLOSURE_OK": "两端词项重叠 {hit} 项，达到最低关联门槛（≥{need}）。",
+    "CLOSURE_THIN": "两端词项只重叠 {hit} 项，低于门槛 {need}：这一环的呼应没有接上。",
+    "CONFLICT_NOTE": "同一位置被多个维度命中，先做哪一类处置由作者按 operation 判断；本 Skill 不替作者合并结论。",
+    "DUP_CROSS": "跨章节",
+    "DUP_INTRA": "同一章节内",
+    "UNC_SCOPE": "判断基于文本层解析；章节与段落边界由空行／换行推断，作者原排版可能不同。",
+    "UNC_PARAM": "滑窗阈值 0.30、过渡词表、因果与绝对化词表都是经验参数，把握不足的条目已在 confidence 标注。",
+    "UNC_SCIENCE": "本 Skill 不裁定科学结论的真伪，只比对结论措辞与结果部分报告范围是否相称。",
+    "CHK_CONTRACT": "契约字段放在 result.json 顶层，键名与输入 output_contract 逐字一致",
+    "CHK_DIMS": "六个维度都输出了 findings、no_issue_with_evidence 或 degraded_by_error",
+    "CHK_QUOTE": "{t} 条 finding 中有 {h} 条的 quote 在正文逐字命中并记下字符区间",
+    "CHK_ACTION": "operation 取固定六值枚举，from_locator 与 expected_effect 均非空",
+    "CHK_JOIN": "没有悬空动作：每条 action.finding_id 都能在 findings 中找回",
+    "CHK_NOREWRITE": "只交诊断与动作方案，未生成整篇改写稿",
+    "CHK_ANCHOR": "每条 finding 都能落到原文的 start/end 字符区间",
+    "SERVICE_PDF": "PDF 与导出属于可选项；本 Skill 只交可编辑的 Markdown 与 JSON。",
+    "SERVICE_REWRITE": "结构审计不产出整篇改写稿。",
+    "SERVICE_OK": "已由 structural_review.json 与 edit_plan.md 覆盖。",
+    "SERVICE_PARTIAL": "已按六维度的通用流程执行；若是特定要求请人工确认。",
+    "SERVICE_DIMS": "本次覆盖到的维度：{d}",
+    "NONE": "- 无"
+  },
+  "vocabulary": {
+    "structural": [
+      "logic",
+      "argument",
+      "structure",
+      "structural",
+      "finding",
+      "逻辑",
+      "论证",
+      "结构"
+    ],
+    "rewrite": [
+      "润色",
+      "重写",
+      "改写",
+      "rewrite"
+    ],
+    "export": [
+      "幻灯片",
+      "导出",
+      "slide",
+      "pptx",
+      "export",
+      "pdf"
+    ]
+  },
+  "render": {
+    "CONS_HEAD": "# 一致性核验（consistency_report）\n\n- case_id: `{cid}`\n\n## 各章篇幅占比\n\n| 章节 | 占比 |\n|---|---|",
+    "CONS_ROW": "| {k} | {v} |",
+    "CONS_CITE": "\n## 引用与图表\n\n- 正文引用编号 {in_text} 个；文献条目 {listed} 条；查无此号的 {unresolved}\n- 正文提到的图表 {figs}；检出的图题／表题 {caps}",
+    "CONS_DUP": "\n## 重复与衔接\n\n- 比较过的段落对 {compared} 组；过 0.30 阈值的 {hits} 组；最高 Jaccard {top}\n- 相邻段落对 {adj} 组",
+    "CONS_STATE": "\n## 完整性与锚点\n\n- 是否截断: {trunc}\n- 字符区间锚点 {anchors} 条\n- 降级记录: {deg}",
+    "TRUNC_YES": "疑似截断：末字符不是句末标点",
+    "TRUNC_NO": "未发现截断迹象",
+    "OUT_HEAD": "# 调整后的结构建议（outline_after）\n\n> 依当前稿件推断，只表达结构处理方式，不改动任何正文。\n\n| 序号 | 章节 | 标题 | 承担的功能 | 词数 | 占全文 | 处理 |\n|---|---|---|---|---|---|---|",
+    "OUT_ROW": "| {i} | {loc} | {title} | {role} | {words} | {pct}% | {note} |",
+    "OUT_ROLE_BODY": "正文段",
+    "OUT_NOTE_KEEP": "原样保留",
+    "OUT_NOTE_FIX": "需调整（详见 edit_plan）",
+    "OUT_NOTE_MERGE": "与复述段落合并",
+    "OUT_MAIN": "\n## 主线的闭合情况\n\n- 研究问题落点: {q}\n- 章节现序: {seq}\n- 四环闭合: {closure}\n- 建议的次序调整: {moves}",
+    "OUT_NOMOVE": "章节次序无需搬动",
+    "PLAN_HEAD": "# 结构改动清单（edit_plan）\n\n- case_id: `{cid}`\n- 稿件体量: {ch} 章 / {pp} 段 / {words} 词\n- 本次产出: {findings} 条问题记录，对应 {actions} 个可执行动作\n- 处理次序: 先 P1 后 P3；每个动作都带 from → to 落点，可直接在稿件里找到\n\n> 只给结构判断与改动建议：不代写正文、不引入材料外的事实；每条判断都附原文引用与字符区间。",
+    "PLAN_GROUP": "\n## {priority} ｜ {label}",
+    "PLAN_ITEM": "\n### {aid} ｜ {dim} ｜ 严重度 {sev}\n\n- 落点: `{loc}`{arrow}\n- 引用原文: > {quote}\n- 问题: {diag}\n- 判定依据: {basis}\n- 处置: `{op}` — {eff}\n- 副作用: {hazard}",
+    "PLAN_COVER_HEAD": "\n## 六个维度的达成情况\n\n| 维度 | 状态 | 问题数 |\n|---|---|---|",
+    "PLAN_COVER_ROW": "| {dim} | {status} | {n} |",
+    "PLAN_PENDING_HEAD": "\n## 需要作者确认或暂时判不了的部分",
+    "PLAN_NONE": "- 无",
+    "NONE": "- 无",
+    "SELF_LINE": "- 自检: {pass}（{detail}）"
+  }
+}
