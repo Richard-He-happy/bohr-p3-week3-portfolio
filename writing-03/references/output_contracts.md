@@ -1,4 +1,4 @@
-# 产物字段说明（writing-03 · 1.0.0）
+# 产物字段说明（writing-03 · 1.1.0）
 
 这份文件只讲两件事：产物长什么样、字段之间靠什么串起来。缺什么标什么，是贯穿全部字段的总原则。
 
@@ -12,7 +12,7 @@
                      ──(source_id→编号)──> 成稿 evidence_driven_draft.md 中的 [n]
 ```
 
-另外还有六份辅助文件：强度说明、著录核验、不确定性汇总、待人工清单、成稿兼容副本 `deliverable.md`、契约与运行记录 `result.json`；复核后会再多一份 `verification.json`。
+另外还有六份辅助文件：强度说明、著录核验、不确定性汇总、待人工清单、成稿兼容副本 `deliverable.md`、契约与运行记录 `result.json`；复核后会再多一份 `verification.json`。`build` 末尾还会写五件可核验资产（金标准、对照报告、版本记录、运行日志、机器自检），详见 SKILL.md 的对应小节。
 
 ## 二、论断清单
 
@@ -69,7 +69,12 @@
 | `errors` / `degradations` / `changes` | 异常、降级、变更三本账 |
 | `integrity` | 结构自检：契约回填、claims↔evidence join、引文全命中、引用编号可解析 |
 | `runtime` | 脚本、版本、Python 版本、耗时、参数、`network: disabled` |
+| `agent_work` | 是否使用 Agent 工作稿、工作稿路径、work 目录 |
+| `verifiable_assets` / `golden_standard` / `diff_report` / `version_history` / `run_log` / `self_check` | 五件可核验资产的路径与字节（`verifiable_assets` 为汇总对象） |
+| `coverage` | 金标准条目数、自检通过与否、对照达标计数 |
+
+契约字段的合并顺序：先按 `output_contract` 赋值，再接固定字段，最后追加资产路径；契约键不会被资产字段覆盖，缺值统一进 `contract_unfilled_keys`。
 
 ## 六、复核脚本会质疑什么
 
-`audit.py` 不读自报文字，只重算：契约键齐不齐、`case_id` 一不一致、契约值是否空、quote 是否仍在材料里逐字出现、claim_id 有没有悬空、每条证据行的 locator/strength/support_scope/quote 是否齐、成稿里的引用编号有没有超出参考文献数量、正文是否出现"证明/确证"类越级词。结果全部写入 `verification.json` 的 `checks`，`passed` 为所有项的交集。
+`audit.py` 不读自报文字，只重算：契约键齐不齐、`case_id` 一不一致、契约值是否空、quote 是否仍在材料里逐字出现、claim_id 有没有悬空、每条证据行的 locator/strength/support_scope/quote 是否齐、成稿正文的引用编号有没有超出参考文献数量、正文是否出现"证明/确证"类越级词、五件资产是否齐全非空、金标准引文是否全命中、`self_check.pass` 是否为真。结果全部写入 `verification.json` 的 `checks`，`passed` 为所有项的交集。
