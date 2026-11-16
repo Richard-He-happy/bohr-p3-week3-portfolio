@@ -242,12 +242,13 @@ def publish(out_dir, res):
     """Write result.json with the envelope fields guaranteed."""
     for field in REQUIRED_FIELDS:
         res.setdefault(field, None if field in ("case_id", "status", "runtime") else [])
-    res["runtime"] = dict(
+    runtime = dict(
         started_at=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(START_TS)),
         finished_at=now(), elapsed_s=round(time.time() - START_TS, 2),
         python=platform.python_version(), platform=platform.platform(),
-        budget_s=780, deadline_hit=time.time() > DEADLINE_TS,
-        **(res.get("runtime") or {}))
+        budget_s=780, deadline_hit=time.time() > DEADLINE_TS)
+    runtime.update(res.get("runtime") or {})
+    res["runtime"] = runtime
     A.write_json(out_dir / "result.json", res)
 
 
@@ -457,6 +458,19 @@ def do_build(args):
                                         + ",".join(sorted(set(unmapped)))})
     publish(out, res)
 
+    # ---- v1.1.0: capture this build's real log lines, emit the five evidence
+    # assets, then republish result.json with their summary keys. All failures
+    # are contained: the v1.0.0 delivery and the zero exit code never depend on it.
+    captured = []
+    global log
+    _forward_log = log
+
+    def _capture_log(msg=""):
+        captured.append(str(msg))
+        _forward_log(msg)
+
+    log = _capture_log
+
     log("== build ==\nruns %d (ok %d)" % (len(runs), counts["runs_ok"]))
     for rec in runs:
         log("  %-16s exit=%s %.2fs metrics=%d"
@@ -471,5 +485,20 @@ def do_build(args):
                row["rel_dev"], row["verdict"]))
     log("verdict %s | status %s\nresult.json -> %s"
         % (verdict, status, out / "result.json"))
+
+    try:
+        import assets
+        assets.finalize(out, work, inp, case, index, record, res, d, plan, runs,
+                        rows, units, captured, case_path)
+    except Exception:
+        try:
+            res.setdefault("degradations", []).append(
+                "assets_failed:" + A.clip(traceback.format_exc(), 400))
+        except Exception:
+            pass
+    try:
+        publish(out, res)
+    except Exception:
+        pass
 
 
