@@ -1,6 +1,6 @@
 ---
 name: manuscript-blueprint-audit
-version: 1.0.0
+version: 1.1.0
 description: Audit the structural blueprint of a full manuscript and hand back an executable edit order. Reads the real file under /input, cuts it into chapter/paragraph/sentence locators, then checks six fixed dimensions (research-question alignment, section skeleton, claim-evidence chain, paragraph hand-offs, repetition, conclusion scope) and emits only findings whose quote is anchored back to the source text, each paired with one of six operations (move/merge/split/narrow/delete/insert). Diagnosis only - the manuscript itself is never rewritten.
 license: MIT
 tags: [academic-writing, structural-audit, claim-evidence-map, edit-order]
@@ -14,7 +14,9 @@ tags: [academic-writing, structural-audit, claim-evidence-map, edit-order]
 它不写新稿、不润色句子、不补科学内容、不生成文献或数据。
 
 - 输入：`/input/case.json` + `task.md` + 稿件（md / txt / docx / pdf / html / tex / csv）。
-- 输出：`/app/output/` 下 6 个可编辑产物 + `result.json`（回填 `output_contract` 全部字段）。
+- 输出：`/app/output/` 下 6 个可编辑产物 + `result.json`（回填 `output_contract` 全部字段）
+  + 5 个可核验资产（`golden_standard.json` / `diff_report.md` / `version_history.md` /
+  `run.log` / `self_check.json`，见第 17 节）。
 - 判定依据：每条发现必须先有**原文逐字引用 + locator + 字符区间**，没有引用就不输出（宁缺勿造）。
 - 运行特性：纯标准库、不联网、不依赖 CWD、0 次模型请求、退出码恒 0。
 
@@ -47,6 +49,8 @@ python3 -B scripts/gates.py                                            # 规则�
 - `gates.py`：被 `audit.py` 导入的检测引擎（文本工具、引用锚点、六个门、动作构建、覆盖表、契约回填、复核器）。
 - 两个脚本都只用 Python 标准库；资源路径用 `Path(__file__).resolve().parent` 解析，与 CWD 无关。
 - `audit.py` 第一步先落盘**合法 partial** `result.json`，最后无条件 finalize 覆盖；任何异常都被捕获，退出码恒 0。
+- finalize 阶段由 `scripts/assets.py` 额外写入 5 个可核验资产（见第 17 节）；这是**加法**，
+  不改变上面三条命令的调用方式，也不改变 6 个主产物的文件名与 schema。
 
 ## 3. 制品清单
 
@@ -59,6 +63,11 @@ python3 -B scripts/gates.py                                            # 规则�
 | `consistency_report.md` | 复核者 | 篇幅占比、引用与图表解析、重复统计、截断与降级 | 辅助 |
 | `pending_human.json` | 作者 | 无法判断项与需要补的材料 | 辅助 |
 | `result.json` | 平台 | 契约字段 + 状态、来源、不确定性、错误、降级、变更记录、指标 | 是 |
+| `golden_standard.json` | 复核者 | 金标准：按 `output_contract` 与任务要求逐项列 expected 字段/章节/修改项，每项带 locator 与逐字 quote | 是 |
+| `diff_report.md` | 复核者 | 实际产物 vs 金标准逐项对照：达标/偏差/缺失/待生成 + 原因 | 是 |
+| `version_history.md` | 维护者 / 评审 | 静态版本记录 v0 → v1.0.0 → v1.1.0（改了什么、为什么、如何回退）+ 本次运行段 | 是 |
+| `run.log` | 复核者 | 真实运行日志：每阶段耗时、退出码契约、降级、异常 | 是 |
+| `self_check.json` | 复核者 / 下游工具 | 机器自检回执：契约键/主产物/引文命中/计数一致/空坏输入兜底/退出码恒 0 | 是 |
 
 不产出 `manuscript.md` / `rewrite.md` / `revised.md` 等整篇改写文件；复核器会把这类文件判为不合规。
 
@@ -239,8 +248,9 @@ action = {
 
 ```
 SKILL.md                        本文件：契约、六维度、schema、降级、自检
-scripts/audit.py     (~25 KB)   编排层：输入发现、分段、渲染、契约回填、自检调用
+scripts/audit.py     (~30 KB)   编排层：输入发现、分段、渲染、契约回填、自检调用、资产钩子
 scripts/gates.py     (~25 KB)   检测层：文本工具、引用锚点、六个门、动作、覆盖、复核器
+scripts/assets.py    (~63 KB)   可核验资产层：金标准、逐项对照、版本记录、运行日志、机器自检
 references/ruleset.json         正则可调项、阈值、文案模板、渲染模板（改文案只动这里）
 references/dimensions.md        六维度定义、规则索引、finding/action 字段表、映射表模板
 references/sample.md            最小输入 / 调用 / 示意输出（示例，非正式结果）
@@ -252,3 +262,22 @@ references/sample.md            最小输入 / 调用 / 示意输出（示例，
 
 新增规则的步骤：在 `patterns` 加正则 → 在 `diagnosis`/`basis`/`effect`/`hazard` 四张表加同名条目 →
 在 `scripts/gates.py` 对应门里调用 `self.rec(...)`。四张表缺任何一条会回落到维度默认文案（不会崩，但会变笼统）。
+
+## 17. 可核验资产（v1.1.0 新增）
+
+finalize 阶段由 scripts/assets.py 额外写入 /app/output/ 的 5 个文件，让第三方不依赖本 Skill 的自述
+即可复核本次运行；任何输入形态（正常 / 空 / 坏 JSON / 截断）都会产出，不会缺件。
+
+| 文件 | 内容 | 复核方式 |
+|---|---|---|
+| golden_standard.json | 金标准：按 output_contract 与任务要求逐项列期望字段/章节/修改项，每项带 locator 与逐字 quote（无来源标 asis: contract） | python3 -m json.tool；看 completeness.quote_hit_rate |
+| diff_report.md | 实际产物 vs 金标准逐项对照（met / partial / missing / pending + 原因） | 直接读；与 self_check.json 交叉核对 |
+| ersion_history.md | 静态版本记录 v0 → v1.0.0 → v1.1.0（改了什么 / 为什么 / 如何回退）+ 本次运行段 | 读第 2 节「本次运行段」 |
+| 
+un.log | 真实运行日志：阶段耗时、退出码契约、降级、异常 | grep -E WARN\|ERROR 或直接读 |
+| self_check.json | 机器自检回执：契约键 / 主产物 / 引文命中 / 计数一致 / 空坏输入兜底 / 退出码恒 0 | 看顶层 pass 与 checks |
+
+约定：
+esult.json 顶层新增 5 个同名字段指向上述文件，output_contract 原字段一个不少；资产生成
+是**加法**（原入口、--check、6 个主产物文件名与 schema、退出码恒 0 均不变）；空/坏输入下是诚实
+降级件（self_check.fallback 记录子进程实测结果），不伪造诊断；回退见 ersion_history.md v1.1.0 条目。
