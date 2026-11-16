@@ -18,7 +18,12 @@ from material_ingest import (OUTLINE, bodies, collect, draft_sections, flat,  # 
                              heading_matches, merge, quote_found, read_case,
                              split_sentences, title_of)
 
-VERSION = "1.0.0"
+try:  # five verifiable assets: optional, a broken import must never break the pipeline
+    import assets  # noqa: E402
+except Exception:  # pragma: no cover - degradation path
+    assets = None
+
+VERSION = "1.1.0"
 T0 = time.time()
 FIELDS = ("case_id", "change_log", "deliverable", "evidence_map", "preserved_facts")
 STUB = '{"status": "input_error"}'
@@ -41,8 +46,12 @@ def save_json(path, payload):
 
 
 def parse_cli(argv=None):
-    cli = argparse.ArgumentParser(prog="chapter_builder.py",
-                                  description="材料锚定的学术章节稿流水线 %s" % VERSION)
+    cli = argparse.ArgumentParser(
+        prog="chapter_builder.py",
+        description="材料锚定的学术章节稿流水线 %s" % VERSION,
+        epilog="build/finalize 额外在输出目录写出 5 件可核验资产："
+               "golden_standard.json / diff_report.md / version_history.md / "
+               "run.log / self_check.json（详见 SKILL.md 第 5 节）。")
     cli.add_argument("cmd", nargs="?", default="build",
                      choices=["init", "show", "check", "build"])
     cli.add_argument("--input", default=None, help="材料目录，默认 /input")
@@ -261,20 +270,47 @@ def cmd_check(ctx, args):
     print(json.dumps(report, ensure_ascii=False, indent=1))
 
 
+def _log(stage, msg="", **kv):
+    """Optional stage recorder for run.log; no-op when the asset module is unavailable."""
+    if assets is not None:
+        try:
+            assets.log(stage, msg, **kv)
+        except Exception:
+            pass
+
+
 def cmd_build(ctx, args):
-    """Write partial result first, then the manuscript and the full result."""
+    """Write partial result first, then the manuscript, the audit files and five assets."""
     state, out = ctx["state"], Path(ctx["output"])
+    if assets is not None:
+        try:
+            assets.start_run(sys.argv[1:], ctx["input"], ctx["output"])
+        except Exception:
+            pass
+    _log("prepare", "case/contract resolved", case_id=state["case_id"] or "-",
+         contract=len(state["contract"] or []) if isinstance(state["contract"], (dict, list))
+         else 0, elapsed_since_start=round(time.time() - T0, 3))
     save_json(out / "result.json", compose(ctx, "partial", None, {}))
+    _log("partial_result", "early contract-complete placeholder written")
     materials = collect(ctx["input"], state)
+    _log("collect", "materials scanned", files=len(materials),
+         readable=sum(1 for item in materials if item["readable"]),
+         degradations=len(state["degradations"]))
     pool = split_sentences(materials)
     stacks = bodies(materials)
+    _log("sentences", "quotable sentences", count=len(pool))
     facts = [{"fact_id": "F%02d" % number, "value_text": flat(item["quote"], 240),
               "source_id": item["source_id"], "locator": item["locator"]}
              for number, item in enumerate([s for s in pool if DIGITS.search(s["quote"])],
                                            1)][:30]
+    _log("facts", "numeric facts", count=len(facts))
     draft_path = Path(args.draft) if args.draft else Path(ctx["work"]) / "draft.json"
     sections = draft_sections(read_draft(draft_path))
+    _log("draft", "agent draft", found=bool(sections),
+         sections=len(sections), path=str(draft_path))
     blocks, changes, rejected = merge(sections, pool, stacks)
+    _log("merge", "draft merged with material blocks", blocks=len(blocks),
+         rejected=len(rejected))
     for item in rejected:
         state["rejected"].append(item)
         state["pending_human"].append({"reason": "引文未在材料中逐字出现",
@@ -286,6 +322,7 @@ def cmd_build(ctx, args):
                 for number, (heading, item) in enumerate([(block["heading"], item)
                                                           for block in blocks
                                                           for item in block["items"]])][:150]
+    _log("evidence", "verified evidence map", count=len(evidence))
     wanted = [word for word in WORDS if word in state["instruction"]]
     covered = [word for word in wanted if any(word in b["heading"] for b in blocks)]
     for word in [w for w in wanted if w not in covered]:
@@ -302,6 +339,8 @@ def cmd_build(ctx, args):
     stats.update({"facts": len(facts), "requested_sections": wanted, "covered_sections": covered,
                   "missing_sections": [w for w in wanted if w not in covered],
                   "number_audit": audit(body, facts, evidence)})
+    _log("render", "manuscript written", status=status, sections=len(blocks),
+         evidence=len(evidence), h2=stats["h2_headings"], chars=stats["chars"])
     changes = changes[:59] + [{"action": "finalize", "status": status, "sections": len(blocks),
                                "evidence": len(evidence), "deliverable": "manuscript.md"}]
     state["change_log"], state["evidence_map"] = changes, evidence
@@ -310,28 +349,74 @@ def cmd_build(ctx, args):
               "sources": [dict((key, item.get(key)) for key in
                                ("id", "path", "kind", "bytes", "chars", "readable", "note"))
                           for item in materials]}
-    save_json(out / "result.json", compose(ctx, status, "manuscript.md", extras))
+    result = compose(ctx, status, "manuscript.md", extras)
+    save_json(out / "result.json", result)
+    _log("result", "contract-complete result.json written",
+         contract_fields=len([key for key in FIELDS if key in result]))
     for name, payload in (("evidence_map.json", evidence), ("preserved_facts.json", facts),
                           ("change_log.json", changes),
                           ("pending_human.json", state["pending_human"])):
         save_json(out / name, payload)
     (out / "consistency_report.md").write_text(report_md(stats, state), encoding="utf-8")
-    print("built %s | status=%s | sections=%d / evidence=%d / h2=%d / chars=%d"
+    _log("audit_files", "evidence/facts/changes/pending/report written")
+    summary = {}
+    if assets is not None:
+        try:
+            bundle = {"state": state, "case": state["case"],
+                      "instruction": state["instruction"], "materials": materials,
+                      "pool": pool, "facts": facts, "evidence": evidence,
+                      "changes": changes, "stats": stats, "status": status,
+                      "result": result, "text": text, "argv": sys.argv[1:],
+                      "input": str(ctx["input"]), "output": str(out),
+                      "work": str(ctx["work"]), "case_id": state["case_id"],
+                      "elapsed": round(time.time() - T0, 3), "version": VERSION}
+            summary = assets.attach(
+                out, bundle, lambda payload: save_json(out / "result.json", payload))
+            if summary.get("errors"):
+                state["errors"].append("assets:" + str(
+                    summary["errors"][0].get("stage")))
+        except BaseException as error:  # assets must never break the main deliverable
+            state["errors"].append("assets:" + type(error).__name__)
+            try:
+                if assets is not None:
+                    assets.fallback(out, "assets:" + repr(error)[:120], sys.argv[1:],
+                                    ctx["input"], out, state)
+            except Exception:
+                pass
+    else:
+        state["degradations"].append({"code": "assets_module_unavailable",
+                                      "path": "scripts/assets.py"})
+        save_json(out / "result.json", result)
+    print("built %s | status=%s | sections=%d / evidence=%d / h2=%d / chars=%d | "
+          "assets=%s | self_check=%s"
           % (out / "manuscript.md", status, len(blocks), len(evidence),
-             stats["h2_headings"], stats["chars"]))
+             stats["h2_headings"], stats["chars"],
+             "5/5" if (summary.get("all_nonempty") if summary else False) else "degraded",
+             (summary.get("self_check") or {}).get("pass")
+             if isinstance(summary.get("self_check"), dict) else "n/a"))
 
 
 def recover(ctx, error):
     state = ctx["state"]
     state["errors"].append("fatal:" + type(error).__name__)
     target = Path(ctx["output"])
-    save_json(target / "result.json", compose(ctx, "input_error", None, {}))
+    payload = compose(ctx, "input_error", None, {})
+    save_json(target / "result.json", payload)
     placeholder = ("# 学术写作产物\n\n## 摘要\n\n运行异常降级：%s，详见 result.json。\n\n"
                    "## 参考文献\n\n材料未提供。\n" % type(error).__name__)
     try:
         (target / "manuscript.md").write_text(placeholder, encoding="utf-8")
     except Exception:
         pass
+    if assets is not None:
+        try:
+            refs = assets.fallback(target, "fatal:" + repr(error)[:160], sys.argv[1:],
+                                   ctx["input"], target, state)
+            if isinstance(refs, dict) and refs:
+                payload.update(refs)
+                save_json(target / "result.json", payload)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------- entry point
