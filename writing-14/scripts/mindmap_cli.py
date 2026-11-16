@@ -18,6 +18,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import audit          # noqa: E402
+import assets         # noqa: E402
 import mmcore         # noqa: E402
 import mmio           # noqa: E402
 from mmio import (IN, WK, OUT, SKILL_ID, build_index, ensure, find_case,  # noqa: E402
@@ -28,7 +29,15 @@ T0 = time.time()
 ROLES = {"mindmap.svg": "主产物：可编辑导图", "mindmap.json": "结构真源与证据",
          "mindmap_preview.png": "预览位图", "node_evidence.csv": "节点→locator/quote",
          "coverage_report.md": "覆盖与结构说明", "pending_human.json": "待人工确认",
-         "golden_standard.json": "金标准与出处", "audit_report.json": "对照与自检"}
+         "golden_standard.json": "金标准与出处", "audit_report.json": "对照与自检",
+         "diff_report.md": "金标准逐项对照", "version_history.md": "版本史与回退方式",
+         "run.log": "真实运行日志", "self_check.json": "机器自检断言"}
+DELIVERY = ("mindmap.svg", "mindmap.json", "mindmap_preview.png", "node_evidence.csv",
+            "coverage_report.md", "pending_human.json", "golden_standard.json",
+            "audit_report.json", "diff_report.md", "version_history.md",
+            "self_check.json", "run.log")
+ASSET_NAMES = ("golden_standard.json", "diff_report.md", "version_history.md",
+               "run.log", "self_check.json")
 
 
 def base_result(cid, status="partial"):
@@ -101,10 +110,20 @@ def cmd_init(args):
                          slots=mmcore.map_contract(contract, context), errors=result["errors"],
                          degradations=result["degradations"], do_probe=not args.no_probe,
                          out=OUT, work=WK)
-    mmcore.finalize(result, contract, context, OUT / "result.json", closing("init 完成"),
-                    {"golden_standard": summary.get("golden_standard") or {},
-                     "audit_report": summary.get("audit_report") or {},
-                     "self_check": summary.get("self_check") or {}})
+    payload = mmcore.finalize(result, contract, context, OUT / "result.json", closing("init 完成"),
+                              {"golden_standard": summary.get("golden_standard") or {},
+                               "audit_report": summary.get("audit_report") or {},
+                               "diff_report": summary.get("diff_report") or {},
+                               "version_history": summary.get("version_history") or {},
+                               "run_log": summary.get("run_log") or {},
+                               "self_check": summary.get("self_check") or {},
+                               "verifiable_assets": summary.get("verifiable_assets") or []})
+    final = assets.finalize_selfcheck(OUT, WK, cid, "init", payload, None, contract,
+                                      mmcore.map_contract(contract, context))
+    if isinstance(final, dict) and final.get("path"):
+        payload["self_check"] = final
+        payload["verifiable_assets"] = assets.asset_index(OUT)
+        mmcore.dump(OUT / "result.json", payload)
     print("== init | case_id=%s | 材料 %d 份 | 文本 %d 字" % (index.get("case_id"),
                                                             len(index["materials"]), index.get("total_chars")))
     if index.get("instruction"):
@@ -262,22 +281,19 @@ def cmd_build(args):
     status = ("insufficient_evidence" if not has_text else
               "partial" if (mode == "fallback" or len(model["nodes"]) < 6 or ratio < 0.6
                             or problems) else "ok")
-    files = [f for f in ("mindmap.svg", "mindmap.json", "mindmap_preview.png", "node_evidence.csv",
-                         "coverage_report.md", "pending_human.json", "golden_standard.json",
-                         "audit_report.json") if (OUT / f).is_file()]
     evidence_rows = [{"node": n["id"], "material": e["material"], "locator": e["locator"],
                       "quote": e["quote"][:140], "type": n["status"], "evidence_id": e["id"],
                       "verified": e["verified"]}
                      for n in model["nodes"] for e in n["evidence"]][:400]
     context = {
-        "case_id": cid, "files": files,
+        "case_id": cid, "files": [],
         "deliverable": {"summary": "%d 节点 / %d 跨分支关系 / %d 条逐字证据；主题「%s」"
                                    % (len(model["nodes"]), len(model["edges"]), verified,
                                       model["theme"]["label"]),
                         "primary": "mindmap.svg", "structure": "mindmap.json",
-                        "preview": "mindmap_preview.png" if "mindmap_preview.png" in files else None,
+                        "preview": "mindmap_preview.png" if preview.get("mode") not in (None, "none") else None,
                         "evidence": "node_evidence.csv", "editable": True},
-        "preview": "mindmap_preview.png" if "mindmap_preview.png" in files else None,
+        "preview": "mindmap_preview.png" if preview.get("mode") not in (None, "none") else None,
         "evidence_map": evidence_rows, "preserved_facts": evidence_rows, "content_map": evidence_rows,
         "mindmap": {"file": "mindmap.json", "theme": model["theme"]["label"],
                     "nodes": len(model["nodes"]), "edges": len(model["edges"]), "depth": depth,
@@ -297,8 +313,6 @@ def cmd_build(args):
     result = base_result(cid, status)
     result["sources"] = source_list(index)
     result["errors"] = input_errors
-    result["artifacts"] = [{"path": f, "bytes": (OUT / f).stat().st_size, "role": ROLES.get(f, f)}
-                           for f in files]
     result["coverage"] = context["coverage"]
     result["degradations"] = list(degraded)
     result["uncertainty"] = list(context["uncertainty"])
@@ -328,18 +342,42 @@ def cmd_build(args):
         degraded.append("审计层降级：%s" % summary["error"])
         result["degradations"] = degraded
 
+    files = [f for f in DELIVERY if (OUT / f).is_file() and (OUT / f).stat().st_size]
+    context["files"] = files
+    result["artifacts"] = [{"path": f, "bytes": (OUT / f).stat().st_size, "role": ROLES.get(f, f)}
+                           for f in files]
+
     extra = {"editable_source": "mindmap.svg", "export_artifact": "mindmap_preview.png",
              "structure_file": "mindmap.json", "node_count": len(model["nodes"]),
              "edge_count": len(model["edges"]), "evidence_coverage": round(ratio, 3),
              "preview_mode": preview.get("mode"),
              "golden_standard": summary.get("golden_standard") or {},
              "audit_report": summary.get("audit_report") or {},
+             "diff_report": summary.get("diff_report") or {},
+             "version_history": summary.get("version_history") or {},
+             "run_log": summary.get("run_log") or {},
              "self_check": summary.get("self_check") or {},
              "node_evidence": summary.get("node_evidence") or {},
              "coverage_report": summary.get("coverage_report") or {},
-             "probes": summary.get("probes") or []}
-    mmcore.finalize(result, contract, context, OUT / "result.json",
-                    closing("build 完成：status=%s" % status), extra)
+             "probes": summary.get("probes") or [],
+             "verifiable_assets": summary.get("verifiable_assets") or []}
+    payload = mmcore.finalize(result, contract, context, OUT / "result.json",
+                              closing("build 完成：status=%s" % status), extra)
+    final = assets.finalize_selfcheck(OUT, WK, cid, "build", payload, model, contract,
+                                      mmcore.map_contract(contract, context))
+    if isinstance(final, dict) and final.get("path"):
+        if final.get("pass") is False:
+            if payload.get("status") == "ok":
+                payload["status"] = "partial"
+            payload["degradations"] = list(payload.get("degradations") or []) + [
+                "最终自检未通过：%s（详见 self_check.json）"
+                % (", ".join(final.get("failed") or []) or "unknown")]
+        payload["self_check"] = final
+        payload["artifacts"] = [{"path": f, "bytes": (OUT / f).stat().st_size,
+                                 "role": ROLES.get(f, f)}
+                                for f in files if (OUT / f).is_file()]
+        payload["verifiable_assets"] = assets.asset_index(OUT)
+        mmcore.dump(OUT / "result.json", payload)
     print("== build | status=%s mode=%s nodes=%d edges=%d evidence=%d depth=%d preview=%s"
           % (status, mode, len(model["nodes"]), len(model["edges"]), verified, depth,
              preview.get("mode")))
@@ -347,6 +385,9 @@ def cmd_build(args):
           % ((summary.get("self_check") or {}).get("pass"),
              (summary.get("self_check") or {}).get("checks"),
              (summary.get("self_check") or {}).get("failed")))
+    print("== 最终自检 | pass=%s checks=%s failed=%s"
+          % ((final or {}).get("pass"), (final or {}).get("checks"),
+             (final or {}).get("failed")))
     print("__END__")
     for name in files:
         print("  %-22s %8d B" % (name, (OUT / name).stat().st_size))
@@ -397,6 +438,7 @@ def crash_report(exc):
         context = skeleton_context("运行时异常，已最小落盘")
         context["case_id"] = cid
         mmcore.finalize(result, contract, context, OUT / "result.json", closing("crash"))
+        assets.ensure(OUT, cid, "crash")
     except Exception:
         pass
 
