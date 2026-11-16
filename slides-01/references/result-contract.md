@@ -78,4 +78,18 @@
 
 生成 deck 最少文本 200 字符；引文最短 8 字符；每页 bullets 上限 5、单条字符上限 190；讲稿重叠率上限 0.6；图表页 caption 截断 95 字符；workorder 没给页数时的默认值 12。
 
-对应实现位置：`scripts/deckgen.py` 的 `run()`、`run_checks()`、`compose_slides()`、`read_workorder()`。
+对应实现位置：`scripts/deckgen.py` 的 `run()`、`run_checks()`、`compose_slides()`、`read_workorder()`；五件资产的装配在 `scripts/assetkit.py`。
+
+## 8. finalize 追加的五件资产字段（v1.1.0，审计增量）
+
+`result.json` 每次运行都会多出五个顶层字段；它们不占用、不改名 `output_contract` 里的原有键（原键全部保留，顺序不动）。值都是「产物目录相对路径 + 摘要」：
+
+| 字段 | 指向 | 摘要里有什么 |
+|---|---|---|
+| `golden_standard` | `golden_standard.json` | `pages`、`items`、`by_basis`（input_quote/workorder/contract 计数）、`verbatim`（graded/hit/ratio）、`schema` |
+| `diff_report` | `diff_report.md` | `pages`、`pass`、`missing`、`deviation`、`page_count_match` |
+| `version_history` | `version_history.md` | `current_version`、字节数 |
+| `run_log` | `run.log` | `stages`、`elapsed_s`、`bytes`、`exit_code` |
+| `self_check` | `self_check.json` | `pass`、`passed`、`skipped`、`total`、`schema` |
+
+资产写出失败不会改变主流程语义：单项失败写最小合法文件并记入 `degradations`，`result.json` 与契约字段照常产出，退出码仍为 0。
