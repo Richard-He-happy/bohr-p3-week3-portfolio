@@ -1,6 +1,6 @@
 ---
 name: opening-report-kit
-description: 面向「开题报告 / 研究计划书」的写作与自查工具包。输入 case.json 与原始材料，输出七要素齐全的可编辑 proposal.md、结构化映射、里程碑与风险登记，以及原样回填 output_contract 的 result.json；内置逐字引文核验、周期相容与数字口径检查、金标准 27 条对照，材料缺失时也能降级出稿。
+description: 面向「开题报告 / 研究计划书」的写作与自查工具包。输入 case.json 与原始材料，输出七要素齐全的可编辑 proposal.md、结构化映射、里程碑与风险登记，以及原样回填 output_contract 的 result.json；build 同时写出 5 件可核验资产（golden_standard / diff_report / version_history / run.log / self_check），内含 27 条 rubric 判据 + output_contract 与 organizer_workorder 逐项期望（locator + 逐字 quote）、契约/主产物/引文/计数/兜底/退出码断言；材料缺失时也能降级出稿。
 version: 1.0.0
 ---
 
@@ -112,19 +112,40 @@ python3 -B $SK show --id M2 --grep 周期  # 回看某份材料的原文段落�
 | `milestones.csv` | 里程碑表：时间、任务、交付物、依赖、完成判据、是否关键路径 |
 | `risks.md` | 风险登记：类型覆盖统计 + 明细 + 决策时点轴 |
 | `result.json` | 机读结果：契约字段、状态、来源、不确定性、待确认、错误、降级、改动、计数 |
-| `golden_standard.json` | 27 条金标准判据及逐条锚点（`source_id/locator/quote`） |
-| `diff_report.md` | 金标准与实际产物逐条对照（pass / missing / deviation）与处置 |
-| `version_history.md` | v0 骨架 → v1 成稿的改动、理由与回退命令 |
-| `run.log` | 每条命令的时序日志（追加写，超上限只留尾部） |
-| `self_check.json` | 契约完整性、引文覆盖率、结构性一致性断言等自检结果 |
+| `golden_standard.json` | 金标准：27 条 rubric 判据 + `output_contract` 逐项（C01…）+ `organizer_workorder` 逐项（W01…）+ 六类期望交付（ED1…），每条带 `source_id/locator/逐字 quote` |
+| `diff_report.md` | 金标准与实际产物逐项对照（rubric 27 条 + 契约逐项 + 工作单逐项；pass / missing / deviation / manual）与处置 |
+| `version_history.md` | 静态版本轴 v0.1.0→v1.0.0 + 三条回退方式 + 运行时追加的本次运行段 |
+| `run.log` | 真实阶段日志（时间戳 / 阶段 / 关键计数 / SUMMARY 收尾 / 错误与降级行） |
+| `self_check.json` | 契约完整性、主产物可评、引文命中、计数重算、空/坏输入兜底、退出码断言（11 项 checks） |
 
-### 6.1 result.json 的回填规则
+### 6.1 五个可核验资产（v1.0.0 增补，`build` 自动写出，`audit` 可只重算）
+
+| 资产 | 回答什么问题 | 谁来生成 | 关键断言 / 复算方式 |
+|---|---|---|---|
+| `golden_standard.json` | 这次到底该交什么、凭什么可核验 | `build` 的资产层（`auditpack.emit_artifacts`） | 每条期望带 locator+逐字 quote；契约项与 `output_contract` 键一一对应；工作单逐项回执 |
+| `diff_report.md` | 实际产物差在哪、怎么处置 | 同上 | 逐项判 pass/missing/deviation/manual，非 pass 项给处置与归属 |
+| `version_history.md` | 版本怎么演进、怎么回退 | 同上（静态段 + 运行段） | 静态段与输入无关；运行段只写真实 case/status/计数/退出码 |
+| `run.log` | 这一轮真实跑了什么、顺序如何 | 每条命令追加一行（`auditpack.note`） | 超 64KB 只留尾部；末尾 `SUMMARY` 含 status/主产物/证据/exit_code |
+| `self_check.json` | 契约、主产物、引文、计数、兜底、退出码是否真的成立 | `build` 收尾（`auditpack.after_build`） | `checks` 11 项全 true 时 `overall_pass=true`；子进程实测空/坏输入的 exit code |
+
+要点：
+
+- 五个资产**每次 `build` 必出**，与 Agent 是否写了工作稿无关；`python3 -B scripts/entry.py audit` 只重算资产，不重渲染 `proposal.md`。
+- `golden_standard.json` 的期望来自「题面 rubric + output_contract 逐项 + organizer_workorder 逐项 + 模板检查表」，不含预制答案；契约/工作单条目引用 `case.json` 原文片段。
+- 工作单条目机械可判时给 pass/deviation；判不了就标 `manual`（人工核实），**不冒充通过**。
+- `result.json` 除原契约字段外，另有 `counts`、`golden_standard`、`diff_report`、`version_history`、`run_log`、`self_check`、`artifacts` 汇总键，便于评审按计数复算。
+- 回退：删 `<WORK>/draft.json` 重跑 `build` 回到 v0 骨架；只回退资产用 `audit`；整包回退见 `version_history.md` §2（本机归档 `work/patch_backup/writing-10_orig` 或 `GITHUB_URL.txt` 指向仓库的历史版本）。
+- 所有命令解释器统一为 `python3`（`python3 -B scripts/entry.py …`），纯标准库、离线、不依赖当前工作目录。
+
+### 6.2 result.json 的回填规则
 
 `output_contract` 里的**每一个键**都必须出现，键名不改、不遗漏；没有值就写 `null` 或 `[]`，不能把键删掉。
 字段名按语义匹配：例如契约里的 `research_question_falsifiability` 映射到 `research_questions`，
 `milestone_feasibility` 映射到 `milestones`，`citation_to_claim` 映射到 `evidence_map`。匹配不上的键保留并给 `null`。
 除契约字段外，`result.json` 一定带 `case_id`、`status`、`deliverable`、`sources`、`uncertainty`、
-`pending_human`、`errors`、`degradations`、`changes`、`runtime`、`counts`、`coverage`、`consistency`。
+`pending_human`、`errors`、`degradations`、`changes`、`runtime`、`counts`、`coverage`、`consistency`，
+以及 5 件资产的汇总键 `golden_standard`、`diff_report`、`version_history`、`run_log`、`self_check` 与 `artifacts`。
+`counts` 由本轮真实计数重算（七要素、RQ、目标、步骤、里程碑、风险、成果、证据、契约/工作单条数、golden 通过数），`self_check.json` 会逐项复算比对。
 
 `status` 判定：
 
@@ -135,9 +156,9 @@ python3 -B $SK show --id M2 --grep 周期  # 回看某份材料的原文段落�
 | `insufficient_evidence` | 有材料但解析不出任何文本（例如纯图片） |
 | `input_error` | 一个输入材料都没找到 |
 
-### 6.2 自研增量：结构性一致性断言
+### 6.3 自研增量：结构性一致性断言
 
-`build` 除了跑 27 条金标准，还会做一次**引用完整性断言**并写进 `result.json.consistency`（`audit` 之后由 self_check 一并复核）：
+`build` 除了跑 27 条 rubric 判据（外加 output_contract / organizer_workorder 逐项回执），还会做一次**引用完整性断言**并写进 `result.json.consistency`（`audit` 之后由 self_check 一并复核）：
 
 - `dangling_objectives`：`objectives[].rq` 指向了不存在的 RQ；
 - `dangling_outcomes`：`outcomes[].rq` 悬空；
@@ -170,7 +191,9 @@ python3 -B $SK show --id M2 --grep 周期  # 回看某份材料的原文段落�
 - [ ] 数字、单位、样本量、经费与材料同形；新增值标"计划值"。
 - [ ] `pending_human` 写清缺什么、什么时候必须补。
 - [ ] `status` 与真实完成度一致，`diff_report.md` 的非 pass 项都有处置。
-- [ ] `self_check.json` 的 `checks` 全为 true，`consistency.passed` 为 true。
+- [ ] `self_check.json` 的 `checks` 全为 true（11 项），`consistency.passed` 为 true。
+- [ ] 5 件资产均非空：`golden_standard.json` / `diff_report.md` / `version_history.md` / `run.log` / `self_check.json`；`golden_standard.json` 每条期望都有 locator+逐字 quote。
+- [ ] `result.json.counts` 与各数组长度一致（用 `self_check.json.counts_consistency.checks` 复算，全 true）。
 
 ## 9. 最小调用示例（示例，不是正式案例结果）
 
@@ -192,7 +215,7 @@ $ python3 -B scripts/entry.py init --input /input --output /app/output --work /a
 | `SKILL.md` | 本说明 |
 | `scripts/entry.py` | 命令行入口：材料抽取、索引、契约映射、init/show/check/build/audit |
 | `scripts/draftkit.py` | 工作稿解析、引文核验、七要素校验、模板兜底、正文渲染 |
-| `scripts/auditpack.py` | 27 条金标准判据、差异报告、版本记录、运行日志、自检、矩阵与表格产物 |
+| `scripts/auditpack.py` | 5 件可核验资产（golden/diff/version/run.log/self_check）、契约与工作单逐项回执、27 条 rubric 判据、矩阵与表格产物 |
 | `references/proposal-skeleton.md` | 七要素检查表 + 表格表头 + 兜底文案与行模板（`<!-- KEY:... -->` 块） |
 
 - 改表头或兜底文案：只改 `references/proposal-skeleton.md`。
