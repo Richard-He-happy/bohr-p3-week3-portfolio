@@ -1,7 +1,7 @@
 ---
 name: lit-extraction-normalizer
 description: 把一批文献抽取行（值、单位、物质/指标名、条件列）清洗成可统计的宽表，同时交付行级变更记录、待人工确认清单、重复与冲突判定、规则应用计数和运行自检。当输入是论文抽取记录且带单位/数字区域规则或目标字段字典，并要求统一字段名、保留原值的单位换算、同义归一、缺失与异常处理、来源追溯时使用。触发词：文献数据清洗、抽取记录标准化、单位换算保留原值、去重与变更记录、clean extracted literature values。
-version: 1.0.0
+version: 1.1.0
 ---
 
 # 文献抽取记录清洗与标准化（lit-extraction-normalizer）
@@ -30,7 +30,8 @@ python3 scripts/run_clean.py --determinism --output /app/output --input /input
 ```
 
 - 不给参数时：优先 `/input`；若不存在则用包目录同级的 `input/`。输出优先 `/app/output`；无 `/app` 时用包目录同级的 `output/`。
-- `--determinism` 会在输出目录临时建两个子目录各跑一遍，逐字节比较全部落盘文件后删除临时目录，只打印比较结论。
+- 同一次命令结束时自动写出 5 件可核验资产（见下一节），**不需要额外参数**。
+- `--determinism` 会在输出目录临时建两个子目录各跑一遍，逐字节比较数据产物后删除临时目录，只打印比较结论；`run.log` 承载真实时间戳与耗时，按设计排除在比对之外（结论里打印 `excluded_volatile=run.log`）。
 - 退出码始终是 0：出现异常写进 `result.json.errors` 与 `degradations`，能继续就继续，不能继续就给 partial 结果，绝不以非零码结束。
 - 资源路径由脚本自身位置推导（`Path(__file__).resolve().parent.parent / "references"`），与当前工作目录无关。
 
@@ -48,7 +49,7 @@ python3 scripts/run_clean.py --determinism --output /app/output --input /input
 
 ## 产物一览
 
-输出目录内生成 9 个文件：
+输出目录内生成 9 个清洗产物 + 5 个可核验资产（共 14 个文件）。清洗产物：
 
 - `result.json` — 主结果。`output_contract` 的每个键都必须出现在顶层（键名不改、未知键保留、缺值给 `null`），另带 `case_id`、`status`、`result`、`claims`、`uncertainties` 与 `uncertainty`（两者同内容，兼容不同读法）、`sources`、`pending_human`、`errors`、`degradations`、`changes`、`runtime`、`contract_mapping`。
 - `cleaned.csv` — 目标宽表，每行带行身份、来源、原文定位、归一后的指标/物质、条件摘要、数值列、单位列、原值原单位、规则号、判定键、状态与合并去向。
@@ -61,6 +62,20 @@ python3 scripts/run_clean.py --determinism --output /app/output --input /input
 - `verify_report.json` — 运行后自检：复算一致率、计数核对、身份唯一性、规则可解析、变更行身份可解析、可统计行数复核。
 
 `status` 的取值语义：全部干净 → `ok`；有待确认或冲突 → `partial`；没有可清洗行 → `insufficient_evidence`；输入不可用 → `input_error`。
+
+## 可核验资产（build/finalize 自动生成，v1.1.0）
+
+每次运行（本包唯一的 build/finalize 阶段）在写完 9 件清洗产物后无条件追加 5 件可逐条复核的资产；不新增命令/参数、不改原产物与 `result.json` 原字段（只多 5 个汇总键）。
+
+| 资产 | 内容与用途 |
+|---|---|
+| `golden_standard.json` | 按规则库与案例 workorder 逐字段的期望清洗结果（原文值/标准化值/单位/判定码/locator/逐字 quote）+ 契约键、字段表、规则期望命中数、产物清单；期望值由输入原文 + 规则语义 + 单位登记表**独立推导**，不读实际判定。 |
+| `diff_report.md` | 已落盘产物 vs 金标准逐层对照（7 层，met/deviation/missing）+ 计数自洽 + 单位换算一致性；读回 CSV 而非内存对象，可发现写盘/排序/去重/契约回填偏移。 |
+| `version_history.md` | 静态版本账本 v0.0.1→v1.1.0（每版改了什么/为什么/如何回退）+ 兼容性承诺 + 四种回退路径 + 末尾「本次运行」段。 |
+| `run.log` | 真实运行日志：阶段名、绝对时间、相对耗时、ok、关键计数，以及全部 `degradations`/`errors`，结尾 `exit_code=0`；回答"它真的跑完了吗、在哪一步降级"。 |
+| `self_check.json` | 10 项机器回执：契约键、金标准对照、计数自洽、单位换算、规则命中数、quote 命中率、空/坏输入兜底（同进程真跑）、partial 先落盘、退出码恒 0、资产齐备；不达标写 `ok=false`+`failed`。 |
+
+约定：quote 是输入单元格原文（空白归一逐字匹配，`\uXXXX` 先反转义）；金标准逐项上限 120 记录 / 240 变更，超出部分由 diff 的全量计数自洽覆盖；`run.log` 承载真实耗时，故两跑不逐字节相同（`--determinism` 会打印 `excluded_volatile=run.log`），其余 13 件产物逐字节确定；空/坏输入时 5 件资产仍写出、金标准按契约生成、diff 如实判 missing、self_check 把不适用检查标 `applicable=false`；整包回退 v1.0.0 只需删除 `scripts/evidence_assets.py` 及其两个子模块（导入受保护，只记一条降级，原 9 件产物照常输出）。
 
 ## 主流程
 
@@ -95,12 +110,12 @@ python3 scripts/run_clean.py --determinism --output /app/output --input /input
 - 完成度：9 件产物齐备；`result.counts` 给出输入行、清洗行、可统计行、改动值、待确认、合并重复、冲突，行数关系可解释。
 - 正确性：每行变更的 `factor/offset/formula` 可复算，`verify_report.formula_consistency_pct` 为 100；区间、误差不压成单值；缺失不写 0。
 - 完整性：字段规范、单位换算、同义归一、缺失与异常、重复记录、来源与变更记录六个方面都有对应产物。
-- 可核验：每行都有 `row_id + source_document_id + rule_ids`；定位原样保留到 `source_locator`。
+- 可核验：每行都有 `row_id + source_document_id + rule_ids`；定位原样保留到 `source_locator`；另有 5 件资产（金标准 / 逐项 diff / 版本史 / 运行日志 / 机器自检）把"期望 vs 实际"和"为什么"写成可复核文件。
 - 质量/效率增益：规则有编号、优先级与使用次数；一次运行完成映射→换算→归一→去重→报告，`counts.pending_review` 即剩余人工量。
-- 增益可验证：`result.method_notes` 预置"算对"标准，`--determinism` 给出同输入两跑的逐字节证据；不自造分数。
-- 创新与改进：可维护规则库 + 表头单位拆解 + 判定键去重 + 来源追溯导出；规则优先级与冲突消解、`human_gate` 划出"规则可改"与"必须人工"的边界。
+- 增益可验证：`result.method_notes` 预置"算对"标准，`--determinism` 给出同输入两跑的逐字节证据，`self_check.json` 给出 10 项机器回执（含空/坏输入真实兜底）；不自造分数。
+- 创新与改进：可维护规则库 + 表头单位拆解 + 判定键去重 + 来源追溯导出；规则优先级与冲突消解、`human_gate` 划出"规则可改"与"必须人工"的边界；金标准由规则独立推导后与落盘产物对照，不是恒真报告。
 - 可靠性：换列名靠 `column_roles`，换 schema 靠案例 `fields`，换单位靠登记表；异常分支见上节。
-- 生态：本文件 + `references/handbook.md`（字段字典、脏数据谱系、单位约定、维护、自查）+ 两份可复用的 JSON 资源。
+- 生态：本文件 + `references/handbook.md`（字段字典、脏数据谱系、单位约定、维护、自查）+ 两份可复用的 JSON 资源 + 可直接被其他评测脚本消费的 `self_check.json`/`golden_standard.json` 结构化契约。
 
 ## 最小示例（示例数据，非正式案例结果）
 
@@ -135,21 +150,27 @@ python3 scripts/run_clean.py --output ./output --input ./input
 - `verify_report.json` 七项检查全过、`formula_consistency_pct=100`。
 - 未知单位行 `value` 为空且出现在 `pending_review.csv`。
 - 区间/误差未压成单值；不同来源、不同条件的行未合并。
-- `--determinism` 两跑逐字节一致。
+- 5 件可核验资产都非空：`golden_standard.json` / `diff_report.md` / `version_history.md` / `run.log` / `self_check.json`；`self_check.json.ok=true` 且 `failed=[]`。
+- `diff_report.md` 汇总结论为 `deviation=0`、`missing=0`（空输入场景除外，届时记录层为空、产物层如实判缺失）。
+- `result.json` 多出 `golden_standard` / `diff_report` / `version_history` / `run_log` / `self_check` 五个汇总键，其余原字段不变。
+- `--determinism` 两跑数据产物逐字节一致（`excluded_volatile=run.log`）。
 - 包内无 `__pycache__`、`.pyc`、临时文件或预制案例答案。
 
 ## 包内文件
 
 | 文件 | 作用 |
 |---|---|
-| `SKILL.md` | 入口：定位、契约、流程、人工门槛、自检清单 |
-| `scripts/run_clean.py` | 命令行入口：输入扫描、流程编排、产物写出、契约回填、自检与确定性比对 |
+| `SKILL.md` | 入口：定位、契约、流程、人工门槛、5 个可核验资产、自检清单 |
+| `scripts/run_clean.py` | 命令行入口：输入扫描、流程编排、产物写出、契约回填、阶段事件、资产发射、自检与确定性比对 |
 | `scripts/clean_engine.py` | 引擎：单位登记与换算、单元格解析、列角色、逐行清洗、判定键去重 |
+| `scripts/evidence_assets.py` | 资产层入口：金标准推导 → diff 对照 → 版本史/run.log → self_check 的编排，含空/坏输入探针与退出码扫描（导入型，无 CLI） |
+| `scripts/evidence_golden.py` | 金标准层：按规则/workorder 逐字段推导期望结果、判定键去重复算、共用工具函数 |
+| `scripts/evidence_render.py` | 渲染层：读回已落盘产物、逐层 diff 报告、静态版本账本、真实阶段日志 |
 | `references/unit_registry.json` | 量纲、前缀、单位目录、拒绝 token、规范单位签名与换算约定 |
 | `references/rulebook.json` | 规则数组、字段角色同义词、条件/备注标记、目标字段表、物质/指标别名、文案 |
 | `references/handbook.md` | 字段字典、脏数据谱系、单位与精度约定、扩展方式、自查脚本 |
 
-依赖：Python ≥ 3.8 标准库即可；无网络、无第三方包。版本 1.0.0。
+依赖：Python ≥ 3.8 标准库即可；无网络、无第三方包。版本 1.1.0（引擎 API 1.0.0 不变）。
 
 
 ## 常见失败模式与规避
@@ -226,7 +247,9 @@ python3 scripts/run_clean.py --output ./output --input ./input
 
 ## 版本与兼容
 
-当前版本 1.0.0，随包资源版本同步。脚本要求 Python 3.8 及以上，只 import 标准库模块（argparse、csv、json、re、sys、subprocess、traceback、pathlib、tokenize 的等价能力由运行时提供）。不依赖任何第三方包、不访问网络、不写包内文件，所有输出都落在 `--output` 指定目录。资源文件统一 UTF-8 编码；脚本读取输入时对编码做了级联回退，因此 GBK/GB18030 导出的 CSV 也能读入，只是会在降级记录里留下替换字符计数。
+当前版本 1.1.0（v1.0.0 = 9 件清洗产物；v1.1.0 = 追加 5 件可核验资产，引擎 API 与产物 schema 不变），随包资源版本同步。脚本要求 Python 3.8 及以上，只 import 标准库模块（argparse、csv、json、re、sys、subprocess、time、tempfile、shutil、traceback、pathlib 的等价能力由运行时提供）。不依赖任何第三方包、不访问网络、不写包内文件，所有输出都落在 `--output` 指定目录。资源文件统一 UTF-8 编码；脚本读取输入时对编码做了级联回退，因此 GBK/GB18030 导出的 CSV 也能读入，只是会在降级记录里留下替换字符计数。
+
+5 件资产是**旁路证据层**：删除 `scripts/evidence_assets.py` 及 `evidence_golden.py`/`evidence_render.py` 即回退到 v1.0.0 的 9 件产物行为（`run_clean.py` 只导入入口模块，缺失时只记一条 `degradations`，退出码仍为 0）。版本历史与四种回退方式写在每次运行生成的 `version_history.md` 里。
 
 
 ## 交付物之间的关系
