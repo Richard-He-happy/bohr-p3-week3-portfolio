@@ -23,7 +23,7 @@ license: MIT
 ## 1. 调用方式
 
 ```bash
-python -B scripts/run_audit.py --input /input --output /app/output
+python3 -B scripts/run_audit.py --input /input --output /app/output
 ```
 
 - `--input` 默认 `/input`，里面应有 `case.json` 与材料文件（`task.md` 等原样忽略，不当作答案来源）。
@@ -112,7 +112,7 @@ paper-formula-evidence-audit/
 
 ## 8. 交付前自检
 
-- [ ] `python -B scripts/run_audit.py --help` 退出码 0，三个脚本可独立被 import。
+- [ ] `python3 -B scripts/run_audit.py --help` 退出码 0，三个脚本可独立被 import。
 - [ ] 含 `mfrac` + `msubsup` 的最小 MathML 能跑通，`latex` 里出现 `\frac` 与上下标，符号表覆盖全部 `mi`。
 - [ ] 默认命名空间 / `mml:` 前缀 / 无命名空间三种小样本都能解析；`mml:` 无声明也能恢复。
 - [ ] 每条公式的 `source_id` 能在 XML 里找到对应容器或节点。
