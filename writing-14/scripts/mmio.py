@@ -26,7 +26,7 @@ import mmcore
 IN = Path(os.environ.get("BOHR_INPUT_DIR") or "/input")
 WK = Path(os.environ.get("BOHR_WORK_DIR") or "/app/work")
 OUT = Path(os.environ.get("BOHR_OUTPUT_DIR") or "/app/output")
-SKILL_ID = "mindmap-evidence-forge/1.0.0"
+SKILL_ID = "mindmap-evidence-forge/1.1.0"
 TEXT_CAP = 600_000
 
 KIND = {".pdf": "pdf", ".docx": "docx", ".md": "text", ".txt": "text", ".tex": "text",
