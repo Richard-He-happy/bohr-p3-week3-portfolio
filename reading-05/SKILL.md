@@ -50,7 +50,8 @@ python3 -B scripts/viewer.py --output /app/output
 `/app/output` 下会有：
 
 - `result.json`：主结果。`output_contract` 的键一个不少；另外固定带 `sources`、`pending_human`、
-  `errors`、`degradations`、`changes`、`runtime` 信封，以及四份资产的摘要字段。
+  `errors`、`degradations`、`changes`、`runtime` 信封，以及五件资产的摘要字段（各含路径、字节数、
+  sha256 或判定）。
 - `reader/index.html`：离线单文件客户端。段落带 `id`，选区高亮，侧栏批注可点击跳转，内嵌
   anchors/annotations/qa 的 JSON 副本。
 - `reader/anchors.json`：段落清单、物理页↔印刷页映射、每条选区的字符区间与精度。
@@ -61,6 +62,19 @@ python3 -B scripts/viewer.py --output /app/output
 
 同时生成 `golden_standard.json`、`diff_report.md`、`version_history.md`、`run.log`、
 `self_check.json` 五件资产。字段级定义集中在 `references/result-and-anchor-contract.md`。
+
+### 4.1 五件可核验资产（每次运行都写到输出根目录）
+
+| 资产 | 内容 | 怎么复核 |
+|---|---|---|
+| `golden_standard.json` | 按 `output_contract` 逐键登记、再按任务逐项列出期望交付：问答（答案与支撑句）、批注、锚点、选区，每项带来源 locator 与逐字 quote | 拿 `char_start`–`char_end` 到 `reader/anchors.json` 段落文本切片，应与该行 quote 逐字一致；契约项看 `json_pointer` |
+| `diff_report.md` | 实际产物对本金标准的逐项对照：总览计数、每行判定与复核位置、非达标项处置 | 先看 §1 总览的 pass/missing/deviation/pending，再看 §2 表与 §3 清单 |
+| `version_history.md` | 静态谱系 v0 → v1.0.0、当前包文件字节与 sha256、回退步骤；并在末尾追加「本次运行」段（run_id、命令、退出码、耗时、资产清单） | §2 可逐文件校验包体；§3 是五步回退与复核命令；§5 与本轮 `run.log` 对照 |
+| `run.log` | 本次真实运行日志：步骤时间线、材料哈希、降级/异常/待人工、校验摘要 | 与 `result.json` 的 `runtime`、`closed_loop`、`errors` 对照 |
+| `self_check.json` | 契约、主产物、引文、计数、兜底、退出码断言（C1–C12），附空输入/坏 JSON 子进程探针 | `overall` 非 `fail` 即通过；失败项与探针结果在 `checks[]`、`probes[]` |
+
+五件资产在 `result.json` 顶层各有同名摘要键；每次运行覆盖写、不追加。资产由本次输入与材料机械推导，
+不含预置答案；异常时由兜底路径写出最小版本并在 `self_check.json` 的 `C0` 记录原因。
 
 ## 5. 七步闭环
 
@@ -127,7 +141,8 @@ ID 不含随机数与时间戳，重复运行顺序稳定。
 6. 同输入连跑两次：批注不减少、`sessions` 增大、续读标记为真。
 7. 空输入、坏 `case.json`、无文本层材料都返回 0 且产出合法 `result.json`。
 8. `self_check.json` 的 `overall` 不是 `fail`。
-9. 包里没有 `__pycache__`、`.pyc`、大二进制或正式案例答案。
+9. 包根五件资产齐全非空，`result.json` 顶层有同名摘要键且 `bytes` 与磁盘文件一致。
+10. 包里没有 `__pycache__`、`.pyc`、大二进制或正式案例答案。
 
 ## 10. 最小示例（合成数据，不是正式案例结果）
 
@@ -153,7 +168,8 @@ claims[0].evidence[0].location = {pdf_page: 2, paragraph_id: p7, char_start: 368
 
 | 文件 | 角色 |
 |---|---|
-| `SKILL.md` | 本说明：调用、契约、流程、规则、自检 |
+| `SKILL.md` | 本说明：调用、契约、流程、规则、自检、五件资产 |
+| `GITHUB_URL.txt` | 提交目录要求的公开仓库链接（首行） |
 | `scripts/pipeline.py` | 主流程与结果组装（输入发现、解析分段、七步编排、契约回填） |
 | `scripts/viewer.py` | 定位/问答/渲染/导出，以及按 JSON 回看重建 |
 | `scripts/evidence.py` | 证据层：载入产物、生成逐项期望与判定 |
@@ -162,7 +178,7 @@ claims[0].evidence[0].location = {pdf_page: 2, paragraph_id: p7, char_start: 368
 | `references/passage-anchoring-rules.md` | 规范化、切段、定位优先级、上下文、降级、回归流程 |
 | `references/inline_client.html` | 单文件客户端模板（内联样式脚本，占位符注入） |
 
-版本 1.0.0，8 个文件、约 120KB；每个脚本 ≤ 25KB，运行需要 Python 3.12 及以上。
+版本 1.0.0，9 个文件、约 125KB；每个脚本 ≤ 25KB，运行需要 Python 3.12 及以上。
 
 ## 12. 维护提示
 
