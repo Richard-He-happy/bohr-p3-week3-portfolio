@@ -47,6 +47,7 @@ python3 -B scripts/proposal_cli.py finalize --output /app/output --input /input
 第一步结束盘上就有合法 JSON（`status` 为 partial），后面即使中断也不至于交白卷。
 第二步的写作规则见后文"素材识别""写作工序""七节要求"。
 第三步做四件事：把事实句回填成溯源记录、复算规划单位、核验引文定位、跑全量审计并覆盖 `result.json`。
+两次收尾都会顺带写出五份可核验资产（下一节），不需要额外命令。
 
 想只看审计结论，不动稿件：`python3 -B scripts/audit_kit.py --output /app/output`，
 要求 critical 与 major 都为零。
@@ -105,6 +106,29 @@ required_supporting_files、scientific_limits）各自对应到 result 的一个
 缺 workorder 时按默认值执行：七节、12 个月、100 单位；此时降级清单里必须出现
 `workorder_absent_defaults_applied` 这一项，且正文仍要满足七节最低要求。
 
+## 可核验资产（v1.0.0 增补）
+
+`init` 与 `finalize` 收尾时，脚本还会往输出目录写五份旁证。这层不改任何原有命令、参数、路径与退出码；
+即使资产层自身出问题，主流程仍按原样返回 0，原有产物与 `result.json` 的原字段都不受影响。
+
+1. `golden_standard.json`——金标准。只从输入的 `output_contract` 和 `organizer_workorder` 导出期望条目
+   （契约键、七节、篇幅区间、周期、三个目标、里程碑、风险条数、人工确认、规划单位、附属产物、科研边界），
+   每条都带来源文件、JSON-pointer 形式的 locator 与逐字引文；输入里没有的项标 `builtin_default`，
+   不伪造引文。正常案例约 30 条上下。
+2. `diff_report.md`——把金标准逐条对到本次实际产物，判 met / deviation / missing 并写实际值与原因。
+   金标准不因实际产物反向修改，所以报告能如实指出"还没写"，不会恒真通过；`init` 阶段偏差多、`finalize` 后应收敛。
+3. `version_history.md`——上半部分静态记录 v0→v1.0.0 的改动、动机与三条回退路径（整包 / 单资产 / 运行期），
+   下半部分按运行追加运行段；每次 `init`、`finalize` 各留一段，只追加不改写历史。
+4. `run.log`——真实运行日志：每行含 UTC 时间、相对进程启动的耗时、阶段名与关键计数，尾部 `[SUMMARY]`
+   记 status、五资产数量、diff 计数、自检通过数与 `exit_code=0`。
+5. `self_check.json`——机器自检回执：契约键完整性、主产物存在性、金标准引文逐字命中率、计数重算一致性、
+   空/坏输入降级探针、partial 先落盘、退出码零策略、资产齐备、禁用词与货币泄漏、金标准 locator 覆盖。
+   `init` 阶段主产物与字数属 soft 项（骨架待写），到 `finalize` 阶段才转 hard。
+
+`result.json` 只追加 `golden_standard` / `diff_report` / `version_history` / `run_log` / `self_check`
+五个汇总键，原有契约字段一个不少。想回退到没有资产层的旧形态：删掉输出目录里这五个文件、删掉这五个键即可；
+包内 `scripts/evidence_assets.py` 缺失时，主流程以 `EA=None` 降级运行，其余行为不变。
+
 ## 硬约束
 
 - 目标恰好三个，编号 G1/G2/G3，每个都能在 `goal_matrix.md` 里 join 上工作包、里程碑、指标。
@@ -145,6 +169,8 @@ case_json_unreadable。材料只有摘要时，正文只写摘要里看得见的
 时间与规划单位在上限内且可复算；风险数、人工确认数达标；禁用修饰要么删掉要么有来源；
 计划句全部带限定词、论文结果全部标外部作者；契约键齐全、case_id 原样、异常记录不遮掩。
 最后再跑一次 `audit_kit.py`，critical 与 major 归零即可提交。
+再核一遍输出目录：五份可核验资产（金标准 / 差异报告 / 版本史 / 运行日志 / 自检回执）都存在且非空，
+`result.json` 里对应五个汇总键齐全；`self_check.json` 的 hard 项应全为 true，soft 项按阶段接受。
 
 另外两条工程约束值得单独提：一是运行产物（含二进制预览）与 JSON 是否合法是两件独立的事，
 稿件坏了不要让 JSON 也一起坏；二是所有判断都基于盘上的真实文件，而不是对"材料应该写了什么"的假设——
@@ -164,6 +190,8 @@ python3 -B scripts/proposal_cli.py finalize --output ./demo_out --input ./demo_i
 ## 文件构成
 
 `SKILL.md` 是本说明；`scripts/proposal_cli.py` 管 init/finalize/all 主流程（`--help` 可用）；
-`scripts/audit_kit.py` 管材料抽取、引文定位与全套审计；`references/workorder-runbook.md` 是字段执行手册；
+`scripts/audit_kit.py` 管材料抽取、引文定位与全套审计；`scripts/evidence_assets.py` 是 v1.0.0 新增的
+可核验资产层（金标准 / 差异报告 / 版本史 / 运行日志 / 自检回执），由主流程调用、不是新入口；
+`references/workorder-runbook.md` 是字段执行手册；
 `references/audit-rubric.md` 存复核口径与运行时模板（`<!--BEGIN:…-->` 块）；`references/usage-examples.md` 是示例。
 版本 1.0.0。维护原则：新判据先写进 references，脚本只做确定性校验；改判据时同步脚本常量与复核口径文件。
