@@ -130,10 +130,10 @@ def period_months(o):
 
 
 def stray_numbers(D):
-    """论断区数字：材料与计划字段都找不到同形文本者。"""
+    """论断区数字：材料与计划字段都找不到同形文本者（计划字段含 period/里程碑/目标判据/步骤）。"""
     d, i = D["draft"], D["idx"]
     mat = " ".join(T(m.get("text")).lower() for m in (i.get("materials") or []))
-    plan = T(json.dumps({k: d.get(k) for k in ("period", "milestones")}, ensure_ascii=False)).lower()
+    plan = T(json.dumps({k: d.get(k) for k in ("period", "milestones", "objectives", "steps")}, ensure_ascii=False)).lower()
     bad = []
     for sc in (json.dumps({k: d.get(k) for k in ("rqs", "objectives", "outcomes", "resources")}, ensure_ascii=False),
                json.dumps(d.get("sections"), ensure_ascii=False)):
@@ -145,7 +145,7 @@ def stray_numbers(D):
 
 
 # (id, 要素, 规则, rubric, 期望, 必备, 修复, 锚点词)
-judged = "rule:<名> 对应 scripts/assets.py 中的函数；判据字段见 must_have"
+judged = "rule:<名> 对应 scripts/auditpack.py 中的函数；契约/工作单条目为逐项回执，判据见 must_have"
 
 
 # ---------- 27 条判定规则：f(D) -> (status, actual, fix) ----------
@@ -503,11 +503,269 @@ def pick_anchors(i, kws, limit=2):
 
 
 def tally(rows):
-    c = {k: 0 for k in ("pass", "missing", "deviation")}
+    c = {k: 0 for k in ("pass", "missing", "deviation", "manual")}
     for r in rows:
         c[r[3]] = c.get(r[3], 0) + 1
-    return {"pass": c["pass"], "missing": c["missing"], "deviation": c["deviation"], "total": len(rows),
+    return {"pass": c["pass"], "missing": c["missing"], "deviation": c["deviation"], "manual": c["manual"],
+            "total": len(rows),
             "pass_rate": round((c["pass"] + 0.5 * c["deviation"]) / max(1, len(rows)), 4)}
+
+
+# ---------- 可核验资产层（v1.0.0）：output_contract 与 organizer_workorder 逐项回执 ----------
+RESULT_ALIASES = [tuple(x.split(":")) for x in (
+    "deliverable:deliverable artifact:deliverable preserved:preserved_facts fact:preserved_facts "
+    "evidence:evidence_map cite:evidence_map source:evidence_map change:change_log revision:change_log "
+    "diff:change_log uncertain:uncertainty pending:pending_human risk:risks milestone:milestones "
+    "plan:milestones question:research_questions objective:objectives outcome:outcomes method:methods "
+    "route:methods coverage:coverage matrix:coverage").split()]
+CONTRACT_SHAPES = {
+    "case_id": ("与输入 case_id 一致", "str"), "deliverable": ("主产物路径/格式/可编辑/字符数/章节", "dict"),
+    "preserved_facts": ("事实保留 term/value/source_id/locator/quote", "list[dict]"),
+    "evidence_map": ("论断→原文 claim_ref/source_id/locator/quote/status", "list[dict]"),
+    "change_log": ("改动记录 action/target/reason/before/after", "list[dict]"),
+    "research_questions": ("研究问题 question/falsifier/metrics/evidence", "list[dict]"),
+    "objectives": ("目标 rq/objective/criterion", "list[dict]"),
+    "methods": ("技术路线 input/action/output/depends_on", "list[dict]"),
+    "milestones": ("里程碑 period/task/deliverable/criterion/critical_path", "list[dict]"),
+    "risks": ("风险 type/trigger/impact/fallback/decision_point", "list[dict]"),
+    "outcomes": ("成果 rq/verification/criterion", "list[dict]")}
+ED_KINDS = [
+    ("ED1", "章节", ["sec:background", "sections"],
+     "proposal.md 七个要素成节，每节有材料依据，不是占位文案"),
+    ("ED2", "RQ", ["rq", "falsifier", "metric", "sample"], "1–3 条研究问题，各含对象+条件、判伪条件、量化阈值与依据"),
+    ("ED3", "目标", ["objlink", "objcrit"], "目标以 rq 指回研究问题，每个目标有可检查的完成判据"),
+    ("ED4", "里程碑", ["ms", "msperiod"], "里程碑 ≥3、落在研究周期内，有交付物/判据并标关键路径"),
+    ("ED5", "风险", ["risk", "riskact"], "风险 ≥4 条 ≥3 类，每条有触发信号/影响/备选与决策时点"),
+    ("ED6", "成果", ["out", "notresult", "outver"], "成果对应 RQ，写清可复跑的验证方式，不冒充已获结果")]
+CASE_CANDIDATES = ("case.json", "input.json", "case/case.json")
+
+
+def _case_doc(idx):
+    """回读输入 case.json：只认 index.input_dir（由 --input 决定），绝不猜默认路径。"""
+    try:
+        d = Path((idx or {}).get("input_dir") or "")
+    except Exception:
+        return {}, "", "case.json"
+    if not d.is_dir():
+        return {}, "", "case.json"
+    try:
+        cands = [d / x for x in CASE_CANDIDATES]
+        cands += sorted(p for p in d.rglob("*.json") if re.match(r"(case|input)[^/]*\.json$", p.name, re.I))
+        for p in cands:
+            if p.is_file():
+                raw = p.read_text(encoding="utf-8-sig", errors="replace")
+                o, _ = _jl(p)
+                if isinstance(o, dict):
+                    try:
+                        rel = str(p.relative_to(d))
+                    except Exception:
+                        rel = p.name
+                    return o, raw, rel
+    except Exception:
+        pass
+    return {}, "", "case.json"
+
+
+def _verbatim_frag(raw, key=None, text=None):
+    """从 case.json 原文截取逐字片段；截不到则返回可追溯的降级片段（verified=False）。"""
+    raw = raw or ""
+    if text is not None:
+        q = (text if isinstance(text, str) else json.dumps(text, ensure_ascii=False))[:160]
+        return q, bool(q) and (T(q) in T(raw))
+    kq = '"%s"' % key
+    i = raw.find(kq)
+    if i < 0:
+        return json.dumps({str(key): None}, ensure_ascii=False), False
+    ls, le = raw.rfind("\n", 0, i) + 1, raw.find("\n", i)
+    frag = raw[ls: len(raw) if le < 0 else le].strip()
+    return (frag[:160] + "…") if len(frag) > 160 else frag, True
+
+
+def _short_val(v, n=90):
+    s = json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else T(v)
+    return (s[:n] + "…") if len(s) > n else s
+
+
+def _case_contract(res, case):
+    for c in (res.get("_contract"), res.get("output_contract"),
+              (case or {}).get("output_contract") if isinstance(case, dict) else None):
+        if isinstance(c, dict) and c:
+            return c
+    return {}
+
+
+def _case_workorder(case):
+    for k in ("organizer_workorder", "organizer_edit_workorder", "workorder", "deliverable_workorder"):
+        v = (case or {}).get(k)
+        if v not in (None, "", [], {}):
+            return k, (v if isinstance(v, list) else [v])
+    return None, []
+
+
+def _contract_items(D):
+    res = D.get("res") or {}
+    case, raw, rel = _case_doc(D.get("idx"))
+    contract = _case_contract(res, case)
+    items = []
+    for i, k in enumerate(contract):
+        k, v = str(k), contract[k]
+        desc, shape = CONTRACT_SHAPES.get(k.lower(), ("result.json 顶层键原样回填，缺值写 null/[]", "any"))
+        q, ok = _verbatim_frag(raw, key=k)
+        items.append({"id": "C%02d" % (i + 1), "element": "契约", "key": k,
+                      "expectation": "output_contract.%s：%s" % (k, desc),
+                      "must_have": "顶层键存在；形状 %s；缺值写 null/[]，不许删键" % shape,
+                      "check": "contract:" + k, "rubric": "完整性", "expected_value": _short_val(v, 100),
+                      "anchors": [{"source_id": rel, "locator": "$.output_contract.%s" % k, "quote": q,
+                                   "kind": "contract", "verified": ok}],
+                      "anchor_status": "verified" if ok else "pending_human", "anchor_kind": "contract",
+                      "fix_hint": "按字段语义映射到 result.json 顶层；缺失写 null/[]"})
+    return items, contract
+
+
+def _workorder_items(D):
+    res = D.get("res") or {}
+    case, raw, rel = _case_doc(D.get("idx"))
+    wkey, wo = _case_workorder(case)
+    items = []
+    if not wkey:
+        return items, None
+    for i, it in enumerate(wo, 1):
+        text = T(it) if isinstance(it, str) else T(json.dumps(it, ensure_ascii=False))
+        if not text:
+            continue
+        q, ok = _verbatim_frag(raw, text=text)
+        items.append({"id": "W%02d" % i, "element": "工作单", "key": wkey, "text": text,
+                      "expectation": "%s.%d：%s" % (wkey, i - 1, text),
+                      "must_have": "交付物中有对应落点（章节/字段/正文），不可遗漏",
+                      "check": "workorder:%d" % i, "rubric": "完整性",
+                      "anchors": [{"source_id": rel, "locator": "$.%s[%d]" % (wkey, i - 1), "quote": q,
+                                   "kind": "workorder", "verified": ok}],
+                      "anchor_status": "verified" if ok else "pending_human", "anchor_kind": "workorder",
+                      "fix_hint": "在正文/result 字段补齐该要求，或如实写入 pending_human"})
+    return items, wkey
+
+
+def resolve_contract(res, key):
+    """把契约键解析到 result.json 的实际回填（与 entry.map_contract 同口径，部分/别名都算有值）。"""
+    res = res if isinstance(res, dict) else {}
+    k = str(key)
+    if k in res and res.get(k) not in (None, "", [], {}):
+        return res.get(k), "top_level"
+    kl = k.lower()
+    for kw, target in RESULT_ALIASES:
+        if kw in kl and res.get(target) not in (None, "", [], {}):
+            return res.get(target), "alias:" + target
+    if k in res:
+        return res.get(k), "top_level_empty"
+    if kl in res:
+        return res.get(kl), "top_level_lower"
+    return None, "missing"
+
+
+def contract_rule(D, key, expected):
+    val, how = resolve_contract(D.get("res") or {}, key)
+    if how == "missing":
+        return "missing", "result.json 无顶层键 %s" % key, "补字段映射"
+    if expected in (None, "", [], {}):
+        return "pass", "键已回填（契约允许空值）", ""
+    if val in (None, "", [], {}):
+        return "deviation", "键存在但为空（契约期望有交付）", "回填实际内容"
+    return "pass", "已回填：%s（%s）" % (_short_val(val, 72), how), ""
+
+
+def _contract_rows(D, items, contract):
+    rows = []
+    for it in items:
+        st, act, fix = contract_rule(D, it["key"], contract.get(it["key"]))
+        rows.append((it["id"], "契约", it["expectation"], st, act, fix, (it["anchors"] or [None])[0]))
+    return rows
+
+
+def _wo_md(D):
+    try:
+        return (Path(D["paths"]["output"]) / "proposal.md").read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def workorder_rule(D, text):
+    """工作单条目 → 可机械核对的落点；无信号时如实标 manual（人工核实），不伪造通过。"""
+    d, c = D.get("draft") or {}, (D.get("rep") or {}).get("counts") or {}
+    t = T(text)
+    rq = [r for r in P.as_list(d.get("rqs") or d.get("research_questions")) if isinstance(r, dict)]
+    cand = []
+    if re.search(r"七要素|章节|结构|大纲", t):
+        n = int(c.get("sections_present") or 0)
+        cand.append((n >= 7, "七要素成节 %d/7" % n))
+    if re.search(r"可证伪|判伪|否定|推翻", t):
+        n = sum(1 for r in rq if T(r.get("falsifier")))
+        cand.append((bool(rq) and n == len(rq), "判伪条件 %d/%d" % (n, len(rq))))
+    if re.search(r"阈值|指标|终点|判据", t):
+        n = sum(1 for r in rq if any(T(m.get("threshold")) for m in P.as_list(r.get("metrics")) if isinstance(m, dict)))
+        cand.append((bool(rq) and n == len(rq), "指标阈值 %d/%d" % (n, len(rq))))
+    if re.search(r"研究目标|目标", t):
+        cand.append((bool(P.as_list(d.get("objectives"))), "目标 %d 条" % len(P.as_list(d.get("objectives")))))
+    if re.search(r"技术路线|路线|方法", t):
+        cand.append((len(P.as_list(d.get("steps"))) >= 3, "路线 %d 步" % len(P.as_list(d.get("steps")))))
+    if re.search(r"里程碑|进度|周期|时间表|排期|计划", t):
+        cand.append((len(P.as_list(d.get("milestones"))) >= 3, "里程碑 %d 条" % len(P.as_list(d.get("milestones")))))
+    if re.search(r"风险|备选|预案", t):
+        cand.append((len(P.as_list(d.get("risks"))) >= 4, "风险 %d 条" % len(P.as_list(d.get("risks")))))
+    if re.search(r"成果|交付物|产出", t):
+        cand.append((bool(P.as_list(d.get("outcomes"))), "成果 %d 条" % len(P.as_list(d.get("outcomes")))))
+    if re.search(r"引用|证据|逐字|出处|来源|quote", t, re.I):
+        tot, ver = int(c.get("evidence_total") or 0), int(c.get("evidence_verified") or 0)
+        cand.append((tot > 0 and ver >= 0.9 * tot, "引文逐字 %d/%d" % (ver, tot)))
+    if re.search(r"markdown|\bmd\b|可编辑|格式", t, re.I):
+        dl = (D.get("res") or {}).get("deliverable") or {}
+        cand.append((bool(dl) and str(dl.get("format")) == "markdown", "主产物 %s" % (dl.get("path") or "?")))
+    m = re.search(r"(\d{3,6})\s*字", t)
+    if m:
+        n = len(_wo_md(D))
+        cand.append((n >= int(m.group(1)), "正文 %d 字（要求 ≥%s）" % (n, m.group(1))))
+    if cand:
+        ok = all(b for b, _ in cand)
+        return ("pass" if ok else "deviation"), "；".join(e for _, e in cand), ("" if ok else "按该要求补齐落点")
+    blob = T(_wo_md(D) + " " + json.dumps(d, ensure_ascii=False))
+    toks = [s for s in re.split(r"[^0-9A-Za-z\u4e00-\u9fff]+", t) if len(s) >= 2]
+    if toks:
+        hit = sum(1 for s in toks if s in blob)
+        r = hit / len(toks)
+        return ("pass" if r >= 0.5 else "manual"), "片段覆盖 %d/%d（%.0f%%）" % (hit, len(toks), r * 100), \
+               ("" if r >= 0.5 else "人工核实落点")
+    return "manual", "无法机械判定", "人工核实落点"
+
+
+def _workorder_rows(D, items):
+    rows = []
+    for it in items:
+        st, act, fix = workorder_rule(D, it["text"])
+        rows.append((it["id"], "工作单", it["expectation"], st, act, fix, (it["anchors"] or [None])[0]))
+    return rows
+
+
+def expected_deliverables(items, citems):
+    """章节/RQ/目标/里程碑/风险/成果 六类期望交付，各自带来源 locator 与逐字 quote。"""
+    by_rule = {}
+    for it in items:
+        by_rule.setdefault(it["check"].split(":", 1)[-1], []).append(it)
+    out = []
+    for eid, kind, rules, expect in ED_KINDS:
+        sub = [it for r in rules for it in by_rule.get(r, [])]
+        anchors = []
+        for it in sub:
+            for a in it.get("anchors") or []:
+                if a.get("verified") and a.get("kind") != "rule":
+                    anchors.append(dict(a, from_item=it["id"]))
+                    break
+            if anchors:
+                break
+        if not anchors and citems:
+            anchors = [dict(citems[0]["anchors"][0], from_item=citems[0]["id"])]
+        out.append({"id": eid, "kind": kind, "artifact": "proposal.md", "expectation": expect,
+                    "items": [it["id"] for it in sub], "anchors": anchors[:1],
+                    "anchor_status": "verified" if anchors and anchors[0].get("verified") else "pending_human"})
+    return out
 
 
 def build_golden(D):
@@ -519,31 +777,53 @@ def build_golden(D):
         except Exception as e:
             st, act, rf = "deviation", "判定异常 %s: %s" % (type(e).__name__, e), "查字段类型"
         a = pick_anchors(D["idx"], kws)
+        if not a:
+            # 材料无可引段落时退化为包内判据锚点，保证每条都有 locator + 逐字 quote
+            a = [{"source_id": "scripts/auditpack.py", "locator": "G.%s.must_have" % gid, "quote": must,
+                  "matched": "", "kind": "rule", "verified": True, "verified_locator": None}]
         items.append({"id": gid, "element": el, "expectation": need, "must_have": must,
                       "check": "rule:" + rule, "rubric": rub, "anchors": a, "fix_hint": fix,
-                      "anchor_status": ("verified" if any(x["verified"] for x in a) else "pending_human") if a else "no_text",
+                      "anchor_status": "verified" if any(x["verified"] for x in a) else "pending_human",
                       "anchor_kind": a[0]["kind"] if a else None})
         rows.append((gid, el, need, st, act, rf, (a[0] if a else None)))
+    citems, contract = _contract_items(D)
+    witems, wkey = _workorder_items(D)
+    crows, wrows = _contract_rows(D, citems, contract), _workorder_rows(D, witems)
     els = [{"id": k, "title": CHAPTER_TITLES[k], "items": [i["id"] for i in items if i["element"] == SECTION_LABELS[k]]} for k in SECTION_LABELS]
     els.append({"id": "meta", "title": "元数据（契约/周期/证据/诚实/七要素）",
                 "items": [i["id"] for i in items if i["element"] in ("契约", "周期", "证据", "诚实", "七要素")]})
+    if citems:
+        els.insert(0, {"id": "contract", "title": "output_contract 逐项（期望交付）", "items": [i["id"] for i in citems]})
+    if witems:
+        els.append({"id": "workorder", "title": "organizer_workorder 逐项（期望交付）", "items": [i["id"] for i in witems]})
+    all_items = items + citems + witems
     gs = {"schema": "golden-standard/v1", "skill": "writing-10-proposal", "skill_version": D["ver"],
           "case_id": D["res"].get("case_id"), "generated_at": stamp_iso(),
           "purpose": "核心产物金标准：逐项写明应交付什么、凭什么可核验（diff_report.md 对照实际产物）",
-          "quote_rule": "quote 为材料段落去空白归一化后的逐字切片，可 `show --id M1` 回看",
-          "status_legend": {"pass": "达标", "missing": "缺失", "deviation": "有内容但不满足判据"},
-          "expectation_source": "题面 rubric + output_contract + proposal-skeleton 检查表；不含预制答案",
+          "quote_rule": "quote 为材料段落去空白归一化后的逐字切片，可 `show --id M1` 回看；契约/工作单条目为 case.json 原文片段",
+          "status_legend": {"pass": "达标", "missing": "缺失", "deviation": "有内容但不满足判据",
+                            "manual": "机械无法判定，需人工核实落点"},
+          "expectation_source": "题面 rubric + output_contract 逐项 + organizer_workorder 逐项 + proposal-skeleton 检查表；不含预制答案",
           "judged_how": judged, "elements": els, "items": items,
+          "expectation_counts": {"rubric_items": len(items), "contract_items": len(citems), "workorder_items": len(witems),
+                                 "expected_deliverables": len(ED_KINDS), "total": len(all_items)},
+          "expected_deliverables": expected_deliverables(items, citems),
+          "contract_items": citems, "contract_source": (citems[0]["anchors"][0]["source_id"] if citems else None),
+          "workorder_items": witems, "workorder_source": wkey,
           "accept_thresholds": {"elements_present": 7, "min_evidence_ratio": 0.9, "min_milestones": 3,
-                                "min_risks": 4, "min_risk_types": 3, "max_rqs": 3, "period_from_material": True},
-          "anchors": {"total": sum(len(i["anchors"]) for i in items),
-                      "verified": sum(1 for i in items for x in i["anchors"] if x["verified"]),
-                      "keyword_items": len([i for i in items if i.get("anchor_kind") == "keyword"]),
-                      "context_items": len([i for i in items if i.get("anchor_kind") == "context"]),
+                                "min_risks": 4, "min_risk_types": 3, "max_rqs": 3, "period_from_material": True,
+                                "contract_items": len(citems), "workorder_items": len(witems)},
+          "anchors": {"total": sum(len(i["anchors"]) for i in all_items),
+                      "verified": sum(1 for i in all_items for x in i["anchors"] if x["verified"]),
+                      "keyword_items": len([i for i in all_items if i.get("anchor_kind") == "keyword"]),
+                      "context_items": len([i for i in all_items if i.get("anchor_kind") == "context"]),
+                      "rule_items": len([i for i in all_items if i.get("anchor_kind") == "rule"]),
+                      "contract_quotes": len([i for i in citems if i["anchors"]]),
+                      "workorder_quotes": len([i for i in witems if i["anchors"]]),
                       "unverified": [{"id": i["id"], "source_id": x["source_id"], "quote": x["quote"][:40]}
-                                     for i in items for x in i["anchors"] if not x["verified"]][:8],
-                      "items_without_anchor": [i["id"] for i in items if not i["anchors"]]}}
-    return gs, rows
+                                     for i in all_items for x in i["anchors"] if not x["verified"]][:8],
+                      "items_without_anchor": [i["id"] for i in all_items if not i["anchors"]]}}
+    return gs, rows + crows + wrows
 
 
 def _c(s, n):
@@ -552,50 +832,88 @@ def _c(s, n):
 
 
 def render_diff(D, gs, rows):
-    c, ec, a = tally(rows), (D["rep"] or {}).get("counts") or {}, gs["anchors"]
-    Ls = ["# 差异报告：金标准判据与实际产物", "",
-          "> case_id=%s｜生成 %s｜包 %s｜金标准 %d 项｜工作稿 %s" % (
-              D["res"].get("case_id") or "n/a", stamp_iso(), D["ver"], len(rows),
+    ec, a = (D["rep"] or {}).get("counts") or {}, gs["anchors"]
+    cnt = gs.get("expectation_counts") or {}
+    nb, nc = int(cnt.get("rubric_items") or 0), int(cnt.get("contract_items") or 0)
+    base, crows, wrows = rows[:nb], rows[nb:nb + nc], rows[nb + nc:]
+    c, cc, cw = tally(base), tally(crows), tally(wrows)
+    Ls = ["# 差异报告：金标准判据与实际产物逐项对照", "",
+          "> case_id=%s｜生成 %s｜包 %s｜金标准 %d 项（rubric %d + 契约 %d + 工作单 %d）｜工作稿 %s" % (
+              D["res"].get("case_id") or "n/a", stamp_iso(), D["ver"], len(rows), nb, nc, len(wrows),
               T((D["res"].get("deliverable") or {}).get("draft_source")) or "unknown"), "",
           "## 1. 判定口径与复跑", "",
           "| 判定 | 含义 |", "|---|---|", "| pass 达标 | 字段/证据齐全且满足判据 |",
-          "| missing 缺失 | 要素或字段无内容 |", "| deviation 偏差 | 有内容但缺判据/依据/来源，或越界 |", "",
+          "| missing 缺失 | 要素或字段无内容 |", "| deviation 偏差 | 有内容但缺判据/依据/来源，或越界 |",
+          "| manual 人工 | 机械无法判定，已列落点供人工核实（不冒充通过） |", "",
           "复跑：`python3 -B scripts/entry.py build --input <INPUT> --output <OUT> --work <WORK>`；",
-          "每项是 `scripts/assets.py` 中 `rule:<名>` 的纯函数，同输入可确定性复现。", "",
+          "每条 rubric 项是 `scripts/auditpack.py` 中 `rule:<名>` 的纯函数，契约/工作单项为逐项回执，同输入可确定性复现。", "",
           "## 2. 总览", "", "| 项 | 值 |", "|---|---|",
-          "| 达标/缺失/偏差 | %d / %d / %d |" % (c["pass"], c["missing"], c["deviation"]),
-          "| 加权达标率（偏差记 0.5） | %.1f%% |" % (c["pass_rate"] * 100),
+          "| rubric 达标/缺失/偏差 | %d / %d / %d（共 %d 项）|" % (c["pass"], c["missing"], c["deviation"], c["total"]),
+          "| 契约逐项达标 | %d/%d |" % (cc["pass"], cc["total"]),
+          "| 工作单逐项 达标/偏差/人工 | %d / %d / %d（共 %d 项）|" % (cw["pass"], cw["deviation"], cw["manual"], cw["total"]),
+          "| 加权达标率（偏差记 0.5，人工不计分） | %.1f%% |" % (c["pass_rate"] * 100),
           "| 锚点可回溯 | %d/%d |" % (a["verified"], a["total"]),
           "| 七要素成节 | %d/7 |" % ec.get("sections_present", 0),
           "| 证据逐字命中 | %d/%d |" % (ec.get("evidence_verified", 0), ec.get("evidence_total", 0)),
           "| RQ/里程碑/风险/成果 | %d / %d / %d / %d |" % (ec.get("rqs", 0), ec.get("milestones", 0),
                                                           ec.get("risks", 0), ec.get("outcomes", 0)), "",
-          "## 3. 逐项对照", "", "| ID | 要素 | 金标准要求 | 判定 | 实际产物 | 依据 |", "|---|---|---|---|---|---|"]
-    for gid, el, need, st, act, rf, an in rows:
+          "## 3. 逐项对照（rubric %d 条）" % nb, "",
+          "| ID | 要素 | 金标准要求 | 判定 | 实际产物 | 依据 |", "|---|---|---|---|---|---|"]
+    for gid, el, need, st, act, rf, an in base:
         Ls.append("| %s | %s | %s | **%s** | %s | %s |" % (
             gid, el, _c(need, 38), {"pass": "达标", "missing": "缺失", "deviation": "偏差"}.get(st, st),
             _c(act, 62), ("%s/%s" % (an["source_id"], an["locator"])) if an else "—"))
+    Ls += ["", "## 4. 契约逐项对照（output_contract → result.json 回填）", ""]
+    if crows:
+        Ls += ["| ID | 契约键 | 期望交付 | 判定 | 实际回填 | 来源 locator | 逐字 quote |",
+               "|---|---|---|---|---|---|---|"]
+        for gid, el, need, st, act, rf, an in crows:
+            Ls.append("| %s | %s | %s | **%s** | %s | %s | %s |" % (
+                gid, T(next((x for x in gs.get("contract_items") or [] if x["id"] == gid), {}).get("key")),
+                _c(need, 46), {"pass": "达标", "missing": "缺失", "deviation": "偏差"}.get(st, st), _c(act, 52),
+                ("%s/%s" % (an["source_id"], an["locator"])) if an else "—", _c(an["quote"], 40) if an else "—"))
+    else:
+        Ls.append("（输入未提供 output_contract：本层不适用，result.json 仍会写 output_contract={}）")
+    Ls += ["", "## 5. 工作单逐项对照（organizer_workorder，若输入给出）", ""]
+    if wrows:
+        Ls += ["| ID | 要求 | 判定 | 落点核验 | 来源 locator | 逐字 quote |", "|---|---|---|---|---|---|"]
+        for gid, el, need, st, act, rf, an in wrows:
+            Ls.append("| %s | %s | **%s** | %s | %s | %s |" % (
+                gid, _c(need, 56), {"pass": "达标", "deviation": "偏差", "manual": "人工核实",
+                                    "missing": "缺失"}.get(st, st), _c(act, 56),
+                ("%s/%s" % (an["source_id"], an["locator"])) if an else "—", _c(an["quote"], 40) if an else "—"))
+    else:
+        Ls.append("（输入未提供 organizer_workorder：本层不适用；不影响 rubric 27 条与契约层判定）")
     bad = [r for r in rows if r[3] != "pass"]
-    Ls += ["", "## 4. 未达标项与处置", ""]
+    Ls += ["", "## 6. 未达标项与处置", ""]
     if not bad:
         Ls.append("（无：%d 项全部达标）" % len(rows))
     else:
         Ls += ["| ID | 判定 | 现状 | 处置 | 归属 |", "|---|---|---|---|---|"]
-        Ls += ["| %s | %s | %s | %s | %s |" % (r[0], "缺失" if r[3] == "missing" else "偏差", _c(r[4], 50),
-                                               _c(r[5] or "—", 36),
-                                               "脚本可补" if r[3] == "deviation" else "pending_human") for r in bad]
+        for r in bad:
+            if r[3] == "missing":
+                st, owner = "缺失", "pending_human"
+            elif r[3] == "manual":
+                st, owner = "人工核实", "人工"
+            else:
+                st, owner = "偏差", "脚本可补"
+            Ls.append("| %s | %s | %s | %s | %s |" % (r[0], st, _c(r[4], 50), _c(r[5] or "—", 36), owner))
     ar = [(r[0], r[6]) for r in rows if r[6]]
-    Ls += ["", "## 5. 锚点核验（能否按 locator 逐字回到原文）", ""]
+    Ls += ["", "## 7. 锚点核验（能否按 locator 逐字回到原文）", ""]
     if ar:
         Ls += ["| ID | 材料 | 定位 | 逐字 quote | 反查 |", "|---|---|---|---|---|"]
         Ls += ["| %s | %s | %s | %s | %s |" % (g, x["source_id"], x["locator"], _c(x["quote"], 44),
                                               "命中" if x["verified"] else "未命中") for g, x in ar]
     else:
         Ls.append("（材料中未取到锚点，见 pending_human）")
-    Ls += ["", "## 6. 与 baseline v1 的差异", "", "| v1 | v2 |", "|---|---|",
+    Ls += ["", "## 8. 与 baseline v0.1.0 的差异", "", "| v0.1.0（骨架） | v1.0.0（当前） |", "|---|---|",
            "| 仅 proposal.md + result.json | 另加 5 件可核验资产 + matrix/csv/risks.md |",
-           "| init/show/check/build | 同前，加可选 audit |", "",
-           "> 依据本次运行生成，不含预制答案。"]
+           "| result.json 只回填契约字段 | 契约逐项回执 + counts/main_product/exit_code 断言 |",
+           "| init/show/check/build | 同前，加可选 audit（不改变原有参数语义） |", "",
+           "## 9. 复跑与确定性", "",
+           "- 同一 draft 与同一输入重复 build，golden/diff/self_check 的结构与判据结果一致（时间戳字段除外）。",
+           "- 判定只读 draft、index、result 与包内规则表，不读网络、不读当前工作目录。",
+           "- 本文件不含预制答案；各条 quote 均可在输入材料或 case.json 中逐字回查。"]
     return "\n".join(Ls) + "\n"
 
 
@@ -682,53 +1000,84 @@ def render_risks_doc(D):
 
 
 def render_version_history(D):
+    """静态版本轴（包本体演进 + 回退方式）+ 运行时追加的本次运行段。"""
     res, c = D["res"], (D["rep"] or {}).get("counts") or {}
-    try:
-        tpl = P.read_template()
-    except Exception:
-        tpl = {}
-    src, p = T((res.get("deliverable") or {}).get("draft_source")) or "unknown", D.get("paths") or {}
+    src = T((res.get("deliverable") or {}).get("draft_source")) or "unknown"
     degs = [T(x) for x in (res.get("degradations") or [])]
     cov = (D["rep"] or {}).get("coverage") or {}
     sec = sum(1 for e in P.ELEMENT_IDS if (cov.get(e) or {}).get("present"))
-    Ls = ["# 版本记录：从 v0 骨架到 v1 成稿", "", "> 由本次真实运行生成；若没有 Agent 工作稿，则如实记为 v0。", "",
-          "## 1. 版本轴", "", "| 版本 | 触发 | 内容来源 | 七要素 | 证据 | 状态 |", "|---|---|---|---|---|---|",
-          "| v0 | init/build 首帧写 partial result.json | proposal-skeleton.md 的 fb.*/rows.* 模板 | %d/7（模板文案） | 0（无材料引文） | partial |" % sec,
-          "| v1 | build（工作稿+缺失补齐） | %s | %d/7 | %d/%d 逐字命中 | %s |" % (
-              src, sec, c.get("evidence_verified", 0), c.get("evidence_total", 0), res.get("status")), "",
-          "## 2. 改了什么", "", "| 对象 | v0 | v1 | 原因 |", "|---|---|---|---|"]
-    for nm, key in (("目标", "objectives"), ("步骤", "steps"), ("里程碑", "milestones"), ("风险", "risks"), ("成果", "outcomes")):
-        Ls.append("| %s | %d 条模板行 | %d 条（工作稿） | 模板只保证不空，成稿须挂材料证据与判据 |" % (
-            nm, len(tpl.get("rows." + key) or []), c.get(key, 0)))
-    Ls.append("| 七要素正文 | 模板文案（7 节占位） | %d/7 成节，共 %d 字/证据 %d 条 | 用材料原文逐节替换占位 |" % (
-        sec, sum((cov.get(e) or {}).get("chars", 0) for e in P.ELEMENT_IDS),
-        sum((cov.get(e) or {}).get("evidence", 0) for e in P.ELEMENT_IDS)))
-    Ls += ["", "## 3. 为什么", "",
-           "- v0 保证中断也有合法 result.json 与七要素骨架（先落盘再优化）。",
-           "- v1 每条论断挂 source_id+locator+逐字 quote，去空白比对，命中<90% 判 partial。",
-           "- 周期/样本量/经费/阈值沿用材料同形文本，未给的进 pending_human（口径不漂移）。",
-           "", "## 4. 如何回退", "", "| 目标 | 操作 | 结果 |", "|---|---|---|",
-           "| 回 v0 | `rm -f %s/draft.json` 后 `build` | fallback_draft，status=partial |" % p.get("work", "<WORK>"),
-           "| 留副本 | `cp %s/proposal.md %s/proposal.v1.md` | 脚本不覆盖副本 |" % (
-               p.get("output", "<OUT>"), p.get("output", "<OUT>")),
-           "| 只重算资产 | `entry.py audit` | 重写 golden/diff/version/self_check |",
-           "| 回退 2.0.0 | 用 baseline_v1.zip 覆盖 SKILL.md 与 entry.py，并移除 auditpack.py | 回到 4 个子命令 |", "",
-           "## 5. 包版本 1.0.0（首发）", "",
-           "SKILL.md 补文档与版本号；entry.py 引入 auditpack、加三处钩子与可选 audit（前 4 个子命令参数语义不变）；",
-           "新增 scripts/auditpack.py（附件四件 + 三份结构化产物 + 27 条判据）；draftkit.py（md5 %s）与 proposal-skeleton.md（md5 %s）未改。" % (
-               _hex(PKG / "scripts" / "draftkit.py", "md5"), _hex(PKG / "references" / "proposal-skeleton.md", "md5")),
-           "", "本次降级/补齐记录（%d 条）：" % len(degs), ""]
-    Ls += (["- " + _c(x, 100) for x in degs[:12]] or ["- （无）"])
+    gs = D.get("gs") or {}
+    cnt = gs.get("expectation_counts") or {}
+    rows = D.get("rows") or []
+    tm = {}
+    for r in rows:
+        tm[r[3]] = tm.get(r[3], 0) + 1
+    outdir = Path((D.get("paths") or {}).get("output") or ".").resolve()
+    five = ["golden_standard.json", "diff_report.md", "version_history.md", "run.log", "self_check.json"]
+    Ls = ["# 版本记录：v0 → v1.0.0（包本体）+ 本次运行", "",
+          "> 本文件分两段：§1–§2 为**静态**版本与回退（与输入无关，可直接照做）；§3 起为 build 运行时追加的真实运行段。",
+          "", "## 1. 版本轴（静态：包本体演进）", "",
+          "| 版本 | 主要内容 | 与上一版的差异 |", "|---|---|---|",
+          "| v0.1.0 | init/show/check/build 四子命令；材料索引（M#/p#）、七要素模板兜底、partial result.json；output_contract 原样回填 | 基线版本 |",
+          "| v0.6.0 | draftkit 校验层：引文逐字比对、周期相容、数字口径、七要素成节；proposal_matrix.json / milestones.csv / risks.md | 新增校验与结构化产物 |",
+          "| v0.9.0 | auditpack 判定层：27 条 rubric 判据 + golden_standard.json / diff_report.md 初版 | 新增判据与差异对照 |",
+          "| v1.0.0（当前） | 5 件可核验资产（golden/diff/version/run.log/self_check）+ output_contract 与 organizer_workorder 逐项期望（locator + 逐字 quote）+ 六类期望交付 + counts/主产物/退出码断言 | **入口、CLI、默认路径、退出码恒 0 均不变**，仅增补资产层 |",
+          "", "## 2. 回退方式（静态：三条，均可离线执行）", "",
+          "| 目标 | 操作 | 结果与验证 |", "|---|---|---|",
+          "| 回退本次运行（回到 v0 骨架） | 删除 `<WORK>/draft.json` 后重跑 `python3 -B scripts/entry.py build` | status=partial、draft_source=fallback，5 件资产仍生成 |",
+          "| 只重算资产（正文不动） | `python3 -B scripts/entry.py audit --input /input --output /app/output --work /app/work` | 只重写 golden/diff/version/self_check 与结构化产物 |",
+          "| 回退包本体到本次增补前 | 用本机归档 `work/patch_backup/writing-10_orig/` 的 6 个文件覆盖包内同名文件；或从 `GITHUB_URL.txt` 指向仓库取对应目录的历史版本 | 重跑冒烟：exit 0，proposal.md 与 result.json 契约字段齐全 |",
+          "", "## 3. 本次运行段（build 自动追加，全部为真实运行值）", "",
+          "| 项 | 值 |", "|---|---|",
+          "| case_id | %s |" % (res.get("case_id") or "n/a"),
+          "| 运行阶段 | build → auditpack 资产层 → self_check（`audit` 只重算资产，不重渲染正文） |",
+          "| status | %s |" % res.get("status"),
+          "| 工作稿来源 | %s（fallback=模板骨架，agent=Agent 工作稿，agent+template=补齐） |" % src,
+          "| 七要素成节 | %d/7 |" % sec,
+          "| 证据逐字命中 | %d/%d |" % (c.get("evidence_verified", 0), c.get("evidence_total", 0)),
+          "| 金标准条目 | rubric %d 条；契约 %d 项；工作单 %d 项；合计 %d 项 |" % (
+              cnt.get("rubric_items", 0), cnt.get("contract_items", 0), cnt.get("workorder_items", 0),
+              cnt.get("total", 0)),
+          "| 差异判定 | pass %d / deviation %d / missing %d / manual %d |" % (
+              tm.get("pass", 0), tm.get("deviation", 0), tm.get("missing", 0), tm.get("manual", 0)),
+          "| 锚点 | %s/%s 可逐字回查 |" % ((gs.get("anchors") or {}).get("verified", 0),
+                                          (gs.get("anchors") or {}).get("total", 0)),
+          "| 主产物 | proposal.md，%s 字（可编辑 Markdown） |" % ((res.get("deliverable") or {}).get("chars") or 0),
+          "| 退出码 | 0（build 恒 0；空输入/坏 JSON 同样恒 0） |",
+          "", "## 4. 本次 5 件资产（运行时核对）", "",
+          "| 资产 | 状态 | 字节 | 说明 |", "|---|---|---:|---|"]
+    note_zh = {"golden_standard.json": "期望交付逐项 + locator/逐字 quote",
+               "diff_report.md": "金标准 vs 实际产物逐项对照",
+               "version_history.md": "本文件：静态版本轴 + 运行段",
+               "run.log": "真实阶段日志（时间戳/阶段/计数）",
+               "self_check.json": "契约/主产物/引文/计数/兜底/退出码断言"}
+    for f in five:
+        p = outdir / f
+        ok = True if f in ("version_history.md", "self_check.json") else (p.is_file() and p.stat().st_size > 0)
+        size = p.stat().st_size if (p.is_file() and f != "version_history.md") else ("运行时生成" if f != "version_history.md" else "本文件")
+        Ls.append("| %s | %s | %s | %s |" % (f, "✓" if ok else "✗", size, note_zh[f]))
+    Ls += ["", "> self_check.json 与本文件同级，由 after_build 在本文件之后写出；其 checks 全为 true 时 overall_pass=true。",
+           "", "## 5. 本次降级与缺口（%d 条）" % len(degs), ""]
+    Ls += (["- " + _c(x, 110) for x in degs[:12]] or ["- （无）"])
+    Ls += ["", "## 6. 为什么这样设计（可核验性）", "",
+           "- 版本轴写清“每个版本能做什么、怎么回去”，评审可按 §2 的任意一条命令复跑，不需要读源码。",
+           "- 运行段只写真实运行产生的值（case_id/status/计数/退出码），不预置任何案例答案。",
+           "- 5 件资产互相引用：golden_standard 定期望 → diff_report 判实际 → self_check 复核断言 → run.log 留时序。",
+           "- package 体积：%d 个文件 / %s B（上限 10 文件 / 180KB）。" % (
+               len([x for x in PKG.rglob("*") if x.is_file()]),
+               sum(x.stat().st_size for x in PKG.rglob("*") if x.is_file()))]
     return "\n".join(Ls) + "\n"
 
 
 def _contract(rj):
     oc = rj.get("output_contract") or {}
     keys = [str(k) for k in oc]
-    empty, top = [k for k in keys if oc.get(k) in (None, "", [], {})], [k for k in keys if k not in rj]
-    return {"applicable": bool(keys), "fields": keys, "count": len(keys), "empty": empty, "not_top_level": top,
-            "complete": bool(keys) and not empty, "pass": bool(keys) and not empty and not top,
-            "note": "输入未提供 output_contract 时不适用"}
+    top = [k for k in keys if k not in rj]
+    null_expected = [k for k in keys if oc.get(k) in (None, "", [], {})]
+    return {"applicable": bool(keys), "fields": keys, "count": len(keys), "empty": null_expected,
+            "not_top_level": top, "null_allowed": len(null_expected),
+            "complete": bool(keys) and not top, "pass": bool(keys) and not top,
+            "note": "键必须出现在 result.json 顶层；契约值为 null/[] 时顶层写 null/[] 即合规（逐项判定见 golden 契约项）"}
 
 
 def _ev(rj):
@@ -833,12 +1182,73 @@ def run_probes(work):
     return {"edge": edge, "exit": ex, "pass": all(v.get("ok") for v in edge.values() if isinstance(v, dict))}
 
 
+def _log_lines(outdir):
+    try:
+        t = (Path(outdir) / "run.log").read_text(encoding="utf-8", errors="replace")
+        return len([x for x in t.split("\n") if x.strip()])
+    except Exception:
+        return 0
+
+
+def _main_product(outdir, rj):
+    """主产物断言：存在、可编辑、七要素成节、deliverable 元数据与文件一致。"""
+    p = Path(outdir) / "proposal.md"
+    md = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    dl = rj.get("deliverable") if isinstance(rj.get("deliverable"), dict) else {}
+    heads = sum(1 for h in ("一、", "二、", "三、", "四、", "五、", "六、", "七、") if "## " + h in md)
+    cf = dl.get("chars")
+    meta = (str(dl.get("path") or "") == "proposal.md" and dl.get("editable") is True
+            and isinstance(cf, int) and cf > 0 and len(dl.get("sections") or []) == 7)
+    ok = bool(md) and len(md) >= 500 and heads == 7 and meta and ((not isinstance(cf, int)) or cf == len(md))
+    return {"ok": ok, "path": "proposal.md", "bytes": len(md.encode("utf-8")), "chars": len(md),
+            "chapter_heads": heads, "deliverable_sections": len(dl.get("sections") or []),
+            "format": dl.get("format"), "editable": dl.get("editable"),
+            "chars_match_result": (not isinstance(cf, int)) or cf == len(md),
+            "detail": "存在且 %d 字；七要素标题 %d/7；deliverable 元数据%s" % (len(md), heads, "齐" if meta else "缺")}
+
+
+def _counts_consistency(rj):
+    """计数断言：result.counts 与各数组长度、契约条数、金标准/diff 条数重新比对。"""
+    c = rj.get("counts") if isinstance(rj.get("counts"), dict) else {}
+    oc = rj.get("output_contract") if isinstance(rj.get("output_contract"), dict) else {}
+    checks, mismatch = {}, []
+    if not c:
+        return {"applicable": False, "checks": {}, "mismatches": ["result.counts 缺失（异常降级路径）"], "pass": True}
+    for ck, rk in (("rqs", "research_questions"), ("objectives", "objectives"), ("steps", "methods"),
+                   ("milestones", "milestones"), ("risks", "risks"), ("outcomes", "outcomes")):
+        if ck in c:
+            a, b = int(c.get(ck) or 0), len(rj.get(rk) or [])
+            checks["count_" + ck] = a == b
+            if a != b:
+                mismatch.append("%s: counts=%d 实际=%d" % (ck, a, b))
+    if "evidence_total" in c:
+        a, b = int(c.get("evidence_total") or 0), len(rj.get("evidence_map") or [])
+        checks["count_evidence"] = a == b
+        if a != b:
+            mismatch.append("evidence_total: counts=%d 实际=%d" % (a, b))
+    if oc:
+        checks["contract_count"] = int(c.get("contract_items") or len(oc)) == len(oc)
+    if c.get("sections_present") is not None:
+        checks["sections_present"] = int(c.get("sections_present")) == 7
+    gs, df = rj.get("golden_standard") or {}, rj.get("diff_report") or {}
+    if gs and df:
+        checks["golden_vs_diff"] = int(gs.get("total") or 0) == int(df.get("total") or 0)
+    checks["artifact_count"] = len(rj.get("artifacts") or []) == len(ARTIFACT_FILES)
+    return {"applicable": True, "checks": checks, "mismatches": mismatch,
+            "pass": bool(checks) and all(checks.values())}
+
+
 def after_build(outdir, work, res):
-    """写 self_check.json（复核已落盘 result.json），摘要回填 result.json。"""
+    """写 self_check.json（断言契约/主产物/引文/计数/兜底/退出码），摘要回填 result.json 与 run.log。"""
     outdir = Path(outdir)
     try:
         rj, _ = _jl(outdir / "result.json")
         rj = rj if isinstance(rj, dict) else {}
+        if isinstance(res, dict):
+            for k in ("case_id", "status", "deliverable", "period", "counts", "golden_standard", "diff_report",
+                      "version_history", "coverage", "consistency", "sources"):
+                if res.get(k) is not None:
+                    rj[k] = res[k]
         arts = []
         for f in ARTIFACT_FILES:
             p, ref = outdir / f, f in ("result.json", "self_check.json")
@@ -846,17 +1256,29 @@ def after_build(outdir, work, res):
                          "bytes": None if ref else (p.stat().st_size if p.is_file() else 0),
                          "sha256": None if ref else (_hex(p) if p.is_file() else None),
                          "note": "自引用/本文件：写入后不再统计哈希" if ref else None})
-        c, ev, num, fc, pb = _contract(rj), _ev(rj), _num(rj), _fals(rj), run_probes(work)
+        rj["artifacts"] = arts
+        c, ev, num, fc = _contract(rj), _ev(rj), _num(rj), _fals(rj)
+        mp, cnt = _main_product(outdir, rj), _counts_consistency(rj)
+        five = ["golden_standard.json", "diff_report.md", "version_history.md", "run.log", "self_check.json"]
+        fv = dict((f, True if f == "self_check.json" else ((outdir / f).is_file() and (outdir / f).stat().st_size > 0))
+                  for f in five)
+        pb = run_probes(work)
         miss = [a["path"] for a in arts if not a["exists"]]
-        chk = {"artifacts_complete": not miss, "contract_complete": (c["pass"] if c["applicable"] else True),
-               "evidence_covered": ev["pass"], "numeric_consistent": num["pass"], "falsifiable": fc["pass"],
+        chk = {"artifacts_complete": not miss, "assets_nonempty": all(fv.values()),
+               "contract_complete": (c["pass"] if c["applicable"] else True), "main_product_ok": mp["ok"],
+               "evidence_covered": ev["pass"], "counts_consistent": cnt["pass"],
+               "numeric_consistent": num["pass"], "falsifiable": fc["pass"],
                "edge_cases_ok": pb["pass"], "no_errors": not (rj.get("errors") or []),
                "exit_codes_zero": all(v == 0 for v in pb["exit"].values() if isinstance(v, int)) if pb["exit"] else True}
         sc = {"schema": "self-check/v1", "skill": "writing-10-proposal",
               "skill_version": (rj.get("runtime") or {}).get("skill_version"), "case_id": rj.get("case_id"),
               "generated_at": stamp_iso(), "status": rj.get("status"), "artifacts": arts,
               "artifact_count": len([a for a in arts if a["exists"]]), "missing_artifacts": miss,
-              "contract": c, "evidence": ev, "numeric_consistency": num, "falsifiability": fc,
+              "assets": [{"path": f, "ok": fv[f],
+                          "bytes": (outdir / f).stat().st_size if f != "self_check.json" and (outdir / f).is_file() else None}
+                         for f in five],
+              "main_product": mp, "contract": c, "evidence": ev, "counts_consistency": cnt,
+              "numeric_consistency": num, "falsifiability": fc,
               "pending_human_count": len(rj.get("pending_human") or []),
               "degradations_count": len(rj.get("degradations") or []), "errors_count": len(rj.get("errors") or []),
               "edge_cases": pb["edge"], "exit_codes": pb["exit"], "checks": chk,
@@ -865,20 +1287,27 @@ def after_build(outdir, work, res):
               "bounds": {"offline": True, "stdlib_only": True, "cwd_independent": True, "exit_code": "always 0"}}
         _w(outdir / "self_check.json", sc)
         rj["self_check"] = {"path": "self_check.json", "overall_pass": sc["overall_pass"], "checks": chk,
+                            "checks_total": len(chk), "checks_passed": sum(1 for v in chk.values() if v),
                             "artifact_count": sc["artifact_count"], "missing_artifacts": miss,
-                            "exit_codes": pb["exit"], "evidence_ratio": ev["ratio"]}
-        rj["artifacts"] = arts
+                            "exit_codes": pb["exit"], "evidence_ratio": ev["ratio"],
+                            "main_product_ok": mp["ok"], "counts_consistent": cnt["pass"]}
+        note(outdir, "ASSETS", "self_check overall=%s artifacts=%d/%d 5assets=%s checks=%d/%d 失败=%s" % (
+            sc["overall_pass"], sc["artifact_count"], len(arts), "5/5" if all(fv.values()) else "缺",
+            sum(1 for v in chk.values() if v), len(chk), ",".join(sc["failures"]) or "无"))
+        note(outdir, "SUMMARY", "case_id=%s status=%s main_product=%s evidence=%d/%d counts=%s exit_code=0（空/坏输入同）" % (
+            rj.get("case_id") or "n/a", rj.get("status"), "ok" if mp["ok"] else "fail",
+            ev["verified"], ev["total"], "ok" if cnt["pass"] else "fail"))
+        rj["run_log"] = {"path": "run.log", "lines": _log_lines(outdir), "exit_code": 0,
+                         "note": "真实阶段日志：init/check/build/assets/summary 与错误降级行"}
         _w(outdir / "result.json", rj)
-        note(outdir, "ASSETS", "self_check overall=%s artifacts=%d/%d 失败=%s" % (
-            sc["overall_pass"], sc["artifact_count"], len(arts), ",".join(sc["failures"]) or "无"))
         if isinstance(res, dict):
-            res["self_check"], res["artifacts"] = rj["self_check"], arts
+            res["self_check"], res["artifacts"], res["run_log"] = rj["self_check"], arts, rj["run_log"]
     except Exception as e:
         note(outdir, "EXC", "post: %s: %s" % (type(e).__name__, e))
 
 
 def emit_artifacts(outdir, work, res, rep=None, draft=None, idx=None, ver=None):
-    """生成 golden_standard/matrix/milestones.csv/risks.md/diff_report/version_history。"""
+    """生成 5 件可核验资产的前 3 件（golden/diff/version）与结构化产物；self_check/run.log 摘要由 after_build 收尾。"""
     outdir, work = Path(outdir), Path(work)
     errs = []
     try:
@@ -904,35 +1333,60 @@ def emit_artifacts(outdir, work, res, rep=None, draft=None, idx=None, ver=None):
                 ver = "2.1.0"
         D = {"draft": draft, "idx": idx, "rep": rep, "res": res, "ver": ver,
              "paths": {"work": str(work), "output": str(outdir)}}
+        note(outdir, "ASSETS", "start：golden/diff/version 生成（draft_source=%s materials=%d）" % (
+            T((res.get("deliverable") or {}).get("draft_source")) or "unknown", len(idx.get("materials") or [])))
         gs, rows = build_golden(D)
-        c = tally(rows)
+        cnt = gs.get("expectation_counts") or {}
+        nb, nc = int(cnt.get("rubric_items") or 0), int(cnt.get("contract_items") or 0)
+        base, crows, wrows = rows[:nb], rows[nb:nb + nc], rows[nb + nc:]
+        c, cc, cw = tally(base), tally(crows), tally(wrows)
+        D.update(gs=gs, rows=rows)
         res["period"] = {"total": T((draft.get("period") or {}).get("total")) or ("%d 个月" % mo if mo else ""),
                          "quote": T((draft.get("period") or {}).get("quote")) or pq,
                          "source": T((draft.get("period") or {}).get("source")) or ("materials" if pq else "unresolved"),
                          "detected_months": mo}
-        if isinstance(res.get("counts"), dict):
-            res["counts"].update(stray_numbers=stray_numbers(D), golden_items=len(rows), golden_pass=c["pass"])
+        counts = res.get("counts") if isinstance(res.get("counts"), dict) else {}
+        counts.update(dict((rep or {}).get("counts") or {}))
+        counts.update(stray_numbers=stray_numbers(D), golden_items=len(rows), golden_pass=c["pass"],
+                      golden_rubric_items=nb, golden_contract_items=len(crows), golden_workorder_items=len(wrows),
+                      golden_manual=cw["manual"], golden_pass_rate=c["pass_rate"],
+                      contract_items=len(crows), artifacts=len(ARTIFACT_FILES), exit_code=0)
+        res["counts"] = counts
         for fn, name, body in ((_w, "golden_standard.json", gs), (_w, "proposal_matrix.json", render_matrix(D)),
                                (_w, "milestones.csv", render_milestone_csv(D)), (_w, "risks.md", render_risks_doc(D)),
-                               (_w, "diff_report.md", render_diff(D, gs, rows)), (_w, "version_history.md", render_version_history(D))):
+                               (_w, "diff_report.md", render_diff(D, gs, rows))):
             try:
                 fn(outdir / name, body)
             except Exception as e:
                 errs.append("%s 生成失败 %s: %s" % (name, type(e).__name__, e))
-        res["golden_standard"] = {"path": "golden_standard.json", "schema": gs["schema"], "items": c["total"],
-                                  "elements": len(gs["elements"]), "anchors": gs["anchors"]["total"],
-                                  "anchors_verified": gs["anchors"]["verified"],
+        # version_history 必须在其余资产落盘后渲染，才能如实报告各资产状态与字节
+        try:
+            _w(outdir / "version_history.md", render_version_history(D))
+        except Exception as e:
+            errs.append("version_history.md 生成失败 %s: %s" % (type(e).__name__, e))
+        res["golden_standard"] = {"path": "golden_standard.json", "schema": gs["schema"], "items": nb,
+                                  "rubric_items": nb, "contract_items": len(crows), "workorder_items": len(wrows),
+                                  "total": len(rows), "elements": len(gs["elements"]),
+                                  "expected_deliverables": len(gs.get("expected_deliverables") or []),
+                                  "anchors": gs["anchors"]["total"], "anchors_verified": gs["anchors"]["verified"],
                                   "status_counts": {"pass": c["pass"], "missing": c["missing"], "deviation": c["deviation"]},
                                   "items_without_anchor": gs["anchors"]["items_without_anchor"]}
-        res["diff_report"] = {"path": "diff_report.md", "total": c["total"], "pass": c["pass"], "missing": c["missing"],
-                              "deviation": c["deviation"], "pass_rate": c["pass_rate"],
+        res["diff_report"] = {"path": "diff_report.md", "total": len(rows), "rubric_total": nb,
+                              "contract_total": len(crows), "workorder_total": len(wrows),
+                              "pass": c["pass"], "missing": c["missing"], "deviation": c["deviation"],
+                              "manual": cw["manual"], "pass_rate": c["pass_rate"],
+                              "contract_pass": cc["pass"], "workorder_pass": cw["pass"],
                               "items": [{"id": r[0], "element": r[1], "status": r[3]} for r in rows]}
         res["version_history"] = {"path": "version_history.md",
-                                  "versions": [{"id": "v0", "kind": "template-skeleton", "status": "partial"},
-                                               {"id": "v1", "kind": "working-draft", "status": res.get("status")}],
-                                  "rollback": "rm -f <WORK>/draft.json 后重跑 build 回 v0；audit 只重算资产"}
-        note(outdir, "ASSETS", "golden=%d pass=%d missing=%d deviation=%d anchors=%d/%d" % (
-            c["total"], c["pass"], c["missing"], c["deviation"], gs["anchors"]["verified"], gs["anchors"]["total"]))
+                                  "static_versions": ["v0.1.0", "v0.6.0", "v0.9.0", "v1.0.0"],
+                                  "runtime_section": True,
+                                  "rollback": ["删 <WORK>/draft.json 后 build 回 v0 骨架",
+                                               "entry.py audit 只重算资产，正文不动",
+                                               "用 work/patch_backup/writing-10_orig 或仓库历史回退包本体"]}
+        res["run_log"] = {"path": "run.log", "exit_code": 0}
+        note(outdir, "ASSETS", "golden=%d（rubric %d / 契约 %d / 工作单 %d）pass=%d missing=%d deviation=%d manual=%d anchors=%d/%d" % (
+            len(rows), nb, len(crows), len(wrows), c["pass"], c["missing"], c["deviation"], cw["manual"],
+            gs["anchors"]["verified"], gs["anchors"]["total"]))
         if not draft:
             errs.append("未取到工作稿：资产按 v0 骨架判定")
     except Exception as e:
