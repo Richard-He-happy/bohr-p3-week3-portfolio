@@ -95,7 +95,7 @@ Findings land in `work/check_report.json`. A `fail` verdict means hard problems:
 
 ## 7. Deliverables and `result.json`
 
-Seven files under `/app/output/`:
+Seven core files under `/app/output/`, plus five verifiable assets that `build` writes beside them:
 
 | File | Content |
 |---|---|
@@ -105,13 +105,32 @@ Seven files under `/app/output/`:
 | `preserved_facts.json` | one record per number/marker: original value, landed flag, source fragment, anchor |
 | `evidence_map.json` | per unit: verbatim source, target text, related terms, derivation note |
 | `change_log.json` | operator edits plus script fallbacks (`actor=agent|script`) |
-| `result.json` | contract echo + status + counts |
+| `result.json` | contract echo + status + counts + five additive asset summaries |
 
 Rules for `result.json`:
 - Keep every `output_contract` key exactly as spelled; unknown keys are not dropped. Point keys at their deliverable paths; use `null` or `[]` when nothing applies.
 - Fixed root fields: `case_id` (echo of the input), `status`, `deliverable`, `preserved_facts`, `evidence_map`, `change_log`, `glossary`, `alignment`.
 - Honesty fields: `sources`, `uncertainty`, `pending_human`, `errors`, `degradations`, `changes`, `metrics`, `runtime`.
+- Asset summary fields are additive only: `golden_standard`, `diff_report`, `version_history`, `run_log`, `self_check`, `verifiable_assets`. They describe the review trail; removing them never changes the delivery contract.
 - `status` semantics: `ok` = every unit done and checks pass; `partial` = gaps exist; `insufficient_evidence` = no readable material at all; `input_error` = structurally broken input.
+
+### 7.1 The five verifiable assets (written by `build`)
+
+| File | What it proves | How it is produced |
+|---|---|---|
+| `golden_standard.json` | expectation ledger per delivery paragraph, glossary entry, alignment row, preserved fact, contract key and artifact; every item carries a `source.locator` + verbatim `source.quote`; top-level `quote_hit_rate` | derived only from `/input` material, `output_contract`, `task_instruction` and package rules; never from the Agent draft |
+| `diff_report.md` | item-by-item actual-vs-golden verdict (met / deviation / missing / n/a), per-layer scoreboard and gap table with locators | rendered from the files on disk right after the core deliverables |
+| `version_history.md` | static v0.1.0 -> v1.0.0 ledger with reason per version, compatibility promise, three-scope rollback playbook, plus a runtime section for this build | static ledger in `scripts/assets.py`; runtime section appended at build time |
+| `run.log` | real journal: UTC timestamp, elapsed seconds, phase, ok flag and counts for every step of this build; summary carries status and `exit_code: 0` | appended to `work/run_events.jsonl` by every verb, rendered at build time |
+| `self_check.json` | machine receipt: contract keys + fixed root fields, main-artifact and counter agreement, 100% verbatim quote re-check, number/fact consistency, degraded-input probes (empty input, corrupt `case.json`, real `init`), exit-code-zero policy, assets present | runs the CLI as subprocesses in a temp dir; never recurses (`W08_ASSET_PROBE` guard) |
+
+Asset rules:
+
+1. The asset layer is additive. It is wrapped in `try/except`; a failure is recorded in `errors`/`degradations` and the seven core files plus `result.json` still finalize with exit code 0.
+2. `self_check.json.ok` means "no hard mechanical failure". Content gaps (e.g. a number not yet in the target) are surfaced by `status=partial` and `diff_report.md`, not hidden.
+3. A reviewer reads `run.log` first, then `self_check.json`, then the `diff_report.md` gap table; `golden_standard.json` is the arbiter when the two disagree.
+4. Deleting the five assets does not invalidate the core delivery; the next `build` recreates them.
+
 
 ## 8. Four fidelity red lines
 
@@ -150,6 +169,7 @@ Each item states `item`, `reason`, `locator` so the editor can jump straight to 
 5. `preserved_facts.json` has no `present_in_target=false`; if it does, the reason is written down.
 6. `status`, `errors`, `degradations` and `pending_human` reflect reality — not cleared to look tidy.
 7. Read the abstract and conclusion once more: no conclusion sentences were invented.
+8. The five verifiable assets exist and are non-empty; `self_check.json` reports `ok: true`; `diff_report.md` has no `missing` core expectation (content deviations are allowed only when `status` is `partial`).
 
 ## 12. Interface example (illustration only, not a case result)
 
@@ -177,11 +197,13 @@ The snippet above documents the interface only; it is not output from any offici
 
 ```
 SKILL.md                                  this manual
-scripts/runner.py      (~24KB)            CLI: init / show / check / build (+ additive audit verb)
-scripts/corpus.py      (~25KB)            text extraction, unit index, draft audit, result assembly
+scripts/runner.py                         CLI: init / show / check / build (+ additive audit verb)
+scripts/corpus.py                         text extraction, unit index, draft audit, result assembly
+scripts/assets.py                         verifiable-asset layer: golden standard, diff, version
+                                          history, run log, self check (additive; never blocks build)
 references/draft_spec.md                  draft fields, gate semantics, troubleshooting
 references/translation_quality.md         term / number / marker / register decision rules
 references/templates_and_fallbacks.md     term-table, bilingual block and pending templates + six exception paths
 ```
 
-Version 1.0.0; standard library only; a run takes seconds; nothing to install. To support a new material type, extend `corpus.read_material`. To change a verification rule, extend `corpus.audit_draft`. Delivery keys follow the input `output_contract` automatically, so the CLI does not change. The unit index, verbatim-quote check and number/marker comparison can be reused for proofreading, reviewer-reply drafting and terminology consistency inspection.
+Version 1.0.0; standard library only; a run takes seconds; nothing to install. To support a new material type, extend `corpus.read_material`. To change a verification rule, extend `corpus.audit_draft`. Delivery keys follow the input `output_contract` automatically, so the CLI does not change. The unit index, verbatim-quote check and number/marker comparison can be reused for proofreading, reviewer-reply drafting and terminology consistency inspection. The asset layer is deliberately read-only with respect to the core delivery: `assets.publish()` runs after the seven deliverables exist and only adds files plus five `result.json` summary keys.
