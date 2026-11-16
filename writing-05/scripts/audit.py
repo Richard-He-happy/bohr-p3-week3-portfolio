@@ -18,8 +18,12 @@ try:
   import gates as G
 except Exception:                    # engine unusable -> honest partial, never a crash
   G = None
+try:
+  import assets as A                 # v1.1.0: verifiable-asset layer (additive, optional)
+except Exception:
+  A = None
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 SKILL = "manuscript-blueprint-audit"
 DIMS = ("research_question_alignment", "section_structure", "argument_chain",
     "paragraph_relations", "duplication", "conclusion_boundary")
@@ -282,6 +286,7 @@ def receipts(case):
 def run(input_dir, out_dir, started):
   out, inp = Path(out_dir), Path(input_dir)
   errors, sources, extra, case, case_path = [], [], [], {}, None
+  log = A.RunLog(VERSION, started) if A else None
 
   def hold(kind, detail, need):
     extra.append({"kind": kind, "detail": detail, "needed_action": need})
@@ -294,6 +299,8 @@ def run(input_dir, out_dir, started):
                   [{"stage": "startup", "detail": "run started"}],
                   "preserved_facts": [], "evidence_map": [], "change_log": [],
                   "pending_human": [], "runtime": {"version": VERSION}})
+    if log:
+      log.mark("startup", "partial result.json written | input=%s out=%s" % (inp, out))
   except Exception as exc:
     print("cannot prepare output dir: %s" % exc)
     return 0
@@ -305,7 +312,7 @@ def run(input_dir, out_dir, started):
         break
     if case_path:
       try:
-        loaded = json.loads(case_path.read_text(encoding="utf-8", errors="replace"))
+        loaded = json.loads(case_path.read_text(encoding="utf-8-sig", errors="replace"))
         case = loaded if isinstance(loaded, dict) else {}
       except Exception as exc:
         errors.append({"stage": "case_parse", "detail": "%s: %s" % (case_path.name, exc)})
@@ -314,6 +321,9 @@ def run(input_dir, out_dir, started):
   contract = case.get("output_contract") or {}
   contract = contract if isinstance(contract, dict) else {"output_contract": contract}
   cid = case.get("case_id") or case.get("id") or case.get("caseId") or "case-unknown"
+  if log:
+    log.mark("case", "case_id=%s contract_keys=%d parse_errors=%d"
+             % (cid, len(contract), len(errors)))
 
   candidates = []
   for path in (sorted(inp.rglob("*")) if inp.is_dir() else []):
@@ -333,6 +343,11 @@ def run(input_dir, out_dir, started):
       if text.strip():
         candidates.append((len(text), path, text))
     sources.append(entry)
+  if log:
+    log.mark("discover", "files=%d readable_texts=%d role_counts=%s"
+             % (len(sources), len(candidates),
+                dict((r, sum(1 for s in sources if s.get("role") == r))
+                     for r in ("case", "instruction", "material", "non_text_material"))))
 
   audit, mpath, mtext, truncated = None, None, "", False
   if not candidates:
@@ -352,6 +367,10 @@ def run(input_dir, out_dir, started):
         G.msg("pending", "PD_TRUNC_N"))
       errors.append({"stage": "degradation",
              "detail": "possible truncation: last char is not terminal"})
+  if log:
+    log.mark("material", "manuscript=%s chars=%d truncated=%s multiple=%d"
+             % (mpath.name if mpath else "-", len(mtext), truncated,
+                max(0, len(candidates) - 1)))
 
   chapters, paragraphs = [], []
   if mtext:
@@ -359,6 +378,9 @@ def run(input_dir, out_dir, started):
       chapters, paragraphs = segment(mtext)
     except Exception as exc:
       errors.append({"stage": "segment", "detail": str(exc)})
+  if log:
+    log.mark("segment", "chapters=%d paragraphs=%d words=%d"
+             % (len(chapters), len(paragraphs), G.wc(mtext) if G else 0))
 
   result = {}
   if G is None:
@@ -374,6 +396,10 @@ def run(input_dir, out_dir, started):
   elif mtext:
     hold("manuscript_too_short", G.msg("pending", "PD_SHORT", w=G.wc(mtext),
                      p=len(paragraphs)), G.msg("pending", "PD_SHORT_N"))
+  if log:
+    log.mark("gates", "findings=%d actions=%d anchors=%d dropped=%d"
+             % (len(result.get("findings") or []), len(result.get("actions") or []),
+                len(result.get("anchors") or []), int(result.get("dropped") or 0)))
 
   findings = result.get("findings") or []
   actions = result.get("actions") or []
@@ -437,6 +463,9 @@ def run(input_dir, out_dir, started):
         write(out / name, note_md)
   except Exception as exc:
     errors.append({"stage": "artifacts", "detail": str(exc)})
+  if log:
+    log.mark("artifacts", "6 editable artifacts written (structural_review/argument_map/"
+             "pending_human/edit_plan/outline_after/consistency_report)")
 
   ids = set(f["finding_id"] for f in findings)
   state = [v.get("status") for v in coverage.values()]
@@ -485,6 +514,9 @@ def run(input_dir, out_dir, started):
     document = dict(payload, status=final_status, self_audit=self_audit)
     document.update(G.fill(contract, document)[0])
     document["contract_unfilled_keys"] = missing
+    if A:                                  # v1.1.0 asset pointers, added after contract
+      for name, filename in A.ASSET_FILES.items():   # back-fill so they never alias a
+        document[name] = str(out / filename)         # user contract key
     write(out / "result.json", document)
 
   try:
@@ -493,6 +525,9 @@ def run(input_dir, out_dir, started):
     if not report.get("pass") and status == "ok":
       status = "partial"
     finalize(status, report)
+    if log:
+      log.mark("self_audit", "pass=%s status=%s contract_unfilled=%d"
+               % (report.get("pass"), status, len(missing)))
     print("wrote %s | status=%s findings=%d actions=%d pending=%d self_audit=%s"
        % (out / "result.json", status, len(findings), len(actions), len(pending), report.get("pass")))
   except Exception as exc:
@@ -501,7 +536,60 @@ def run(input_dir, out_dir, started):
       finalize("partial", {"pass": False, "error": str(exc)})
     except Exception:
       print("result.json could not be finalized: %s" % exc)
+
+  # v1.1.0 verifiable assets: additive; failure degrades to stubs, exit stays 0
+  try:
+    if A is None:
+      print("assets.py not importable; verifiable assets skipped")
+    else:
+      if log:
+        for item in degradations:
+          log.degrade(item.get("stage") or "degradation", item.get("detail") or "")
+        for item in errors:
+          if item not in degradations:
+            log.error(item.get("stage") or "error", item.get("detail") or "")
+      info = A.build({
+        "input": str(inp), "out": str(out), "case": case, "case_parsed": bool(case),
+        "case_path": str(case_path) if case_path else None,
+        "contract": contract, "cid": cid, "sources": sources,
+        "manuscript": {"path": str(mpath) if mpath else None,
+                       "name": mpath.name if mpath else None, "text": mtext,
+                       "chars": len(mtext), "truncated": truncated,
+                       "chapters": len(chapters), "paragraphs": len(paragraphs),
+                       "words": G.wc(mtext) if G else 0},
+        "findings": findings, "actions": actions, "anchors": anchors,
+        "coverage": coverage, "pending": pending, "errors": errors,
+        "degradations": degradations, "status": status, "started": started,
+        "version": VERSION, "contract_missing": missing, "log": log,
+        "preserved": len(preserved)})
+      written = info.get("bytes") or {}
+      print("wrote 5 verifiable assets | golden=%s diff=%s history=%s runlog=%s selfcheck=%s pass=%s"
+            % (written.get("golden_standard"), written.get("diff_report"),
+               written.get("version_history"), written.get("run_log"),
+               written.get("self_check"), info.get("self_check_pass")))
+  except Exception as exc:
+    errors.append({"stage": "assets", "detail": "%s: %s" % (type(exc).__name__, exc)})
+    try:
+      A.ensure_assets(out, cid, VERSION, str(exc), log)
+      print("verifiable assets completed by fallback after %s" % exc)
+    except Exception:
+      pass
   return 0
+
+
+def asset_cid(input_dir, out_dir):
+  """case_id for the post-run asset fallback: prefer result.json, then case.json."""
+  try:
+    data = json.loads((Path(out_dir) / "result.json").read_text(encoding="utf-8"))
+    if data.get("case_id"):
+      return data["case_id"]
+  except Exception:
+    pass
+  try:
+    data = json.loads((Path(input_dir) / "case.json").read_text(encoding="utf-8"))
+    return data.get("case_id") or data.get("id") or "case-unknown"
+  except Exception:
+    return "case-unknown"
 
 
 def main(argv=None):
@@ -522,7 +610,18 @@ def main(argv=None):
       return 0
     print(json.dumps(G.inspect(args.out, G.contract_keys(args.input)), ensure_ascii=False, indent=2))
     return 0
-  return run(args.input, args.out, time.time())
+  try:
+    rc = run(args.input, args.out, time.time())
+  finally:
+    # post-run trap: aborted runs still get five honest asset stubs
+    try:
+      if A is not None:
+        made = A.ensure_assets(Path(args.out), asset_cid(args.input, args.out), VERSION)
+        if made:
+          print("verifiable assets completed by post-run fallback: %s" % ", ".join(made))
+    except Exception:
+      pass
+  return rc
 
 
 if __name__ == "__main__":
