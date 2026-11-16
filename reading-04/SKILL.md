@@ -126,6 +126,23 @@ version: 1.0.0
 
 **本包增量 · 三验抽样**：额外做一张 `work/sample_audit.md` 记录表，各抽一个数值格、未报告格、冲突格，逐格核对「值→引文→锚点→单位/数据集/口径」四环，并写明失败处置。模板见 `references/review_playbook.md` 第 5 节。
 
+## K2. 五件可核验资产（build 自动生成，v1.0.0+p1）
+
+`build` 在写完四件主产物后，由 `scripts/assets.py` 在交付区**追加**五件资产，原主产物与
+`output_contract` 键不变（`result.json` 只加键：`assets`/`golden_standard`/`diff_report`/
+`self_check`/`version_history`/`run_log`）：
+
+| 资产 | 内容与复核方式 |
+|---|---|
+| `golden_standard.json` | 每文档 × 每字段的期望值/单位/数据集/口径/锚点/逐字引文（取自 `work/draft.json`，并用 `work/index.json` 文本逐字回查），附 `quote_summary` 与 `coverage` |
+| `diff_report.md` | 实际 `comparison_matrix.csv` vs 金标准逐格 diff（value/unit/dataset/metric_scope/locator/quote/status 七维）、可比性闸门、冲突归因、缺口/降级；零差异时也列全表 |
+| `version_history.md` | 静态版本线 v0 → v1.0.0 → 本次 p1 与回退点；每次 `build` 在运行时记录追加一行 |
+| `run.log` | 真实运行日志（append-only）：build 摘要、资产字节数、引文回查、self_check 结果 |
+| `self_check.json` | 退出码、契约键、主产物存在性、逐字引文通过率、文档×字段计数、fallback 兜底、产物哈希、环境声明 |
+
+生成时不改变任何入口/参数/默认路径/退出码，也不触碰四件主产物；`assets.py` 内所有失败都被
+捕获并写入 `run.log`，`build` 仍以 `python3 -B scripts/main.py build` 正常结束（exit 0）。
+
 ## L. 演练（示例，非正式结果）
 
 ```bash
