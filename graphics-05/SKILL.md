@@ -114,10 +114,10 @@ source、locator、quote、status；图中没有材料之外的实体、数字�
 ## 示例（示意，不是正式案例结果）
 
 ```bash
-python -B scripts/main.py init  --input demo/input --work demo/work --output demo/out
+python3 -B scripts/main.py init  --input demo/input --work demo/work --output demo/out
 # 阅读 show 输出，写 demo/work/plan.json
-python -B scripts/main.py check --work demo/work
-python -B scripts/main.py build --input demo/input --work demo/work --output demo/out
+python3 -B scripts/main.py check --work demo/work
+python3 -B scripts/main.py build --input demo/input --work demo/work --output demo/out
 ```
 
 维护约定：字段变动要同步 check 与 content_map；版式只动 `render_kit.compose_figure`；PNG
