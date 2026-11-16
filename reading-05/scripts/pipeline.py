@@ -146,6 +146,8 @@ def inli97(term13):
             mark17.append(scor74)
             grad30[key] = scor74
         lane65(plai95 / 'annotations.json', mark17)
+    if not mark17:
+        lane65(plai95 / 'annotations.json', [])
     text104('ask', 'done' if any((row98['status'] == 'answered' for row98 in meas100)) else 'partial', output={'answered': sum((1 for row98 in meas100 if row98['status'] == 'answered')), 'tasks': len(meas100)}, artifact='reader/qa_log.json')
     text104('save', 'done' if mark17 else 'failed', output={'annotations': len(mark17)}, artifact='reader/annotations.json')
     read39 = {'char_exact': 0, 'paragraph_level': 0, 'page_level': 0, 'unresolved': 0}
