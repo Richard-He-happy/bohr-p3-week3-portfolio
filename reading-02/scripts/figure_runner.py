@@ -15,6 +15,10 @@ try:
   IMPORT_ERR = ""
 except Exception as e:
   RA, IMPORT_ERR = None, str(e)
+try:                    # additive layer: five verifiable assets (patch increment); never fatal
+  import assets as A
+except Exception:
+  A = None
 BASE_DIR = Path(__file__).resolve().parent.parent
 VERSION = "1.0.0"
 READABILITY_VALUES = ("directly_read", "inferred", "undetermined")
@@ -46,6 +50,13 @@ def digest_file(p):
   with open(p, "rb") as f:
     for b in iter(lambda: f.read(1 << 20), b""): h.update(b)
   return h.hexdigest()
+
+
+def _log(stage, msg="", **kv):
+  """Best-effort audit log hook: the additive assets layer must never break the run."""
+  if A is not None:
+    try: A.log(stage, msg, **kv)
+    except Exception: pass
 
 
 def collapse_text(t):
@@ -227,6 +238,14 @@ def finalize_result(state):
   if final["verification"]["hard_failures"] and final["status"] in ("answered", "ok"):
     final["status"] = state["status"] = "partial"
     final["errors"].append("status downgraded: verification failure")
+  _log("finalize", "audit done", hard_failures=final["verification"]["hard_failures"],
+       claims=len(final.get("claims") or []), status=final["status"])
+  if A is not None:                 # additive: five verifiable assets + five summary keys
+    try:
+      A.attach(state, final, sys.argv)
+    except Exception as e:
+      try: A.fallback(state["out"], "attach failed: %s" % (e,))
+      except Exception: pass
   dump_json(state["out"] / "result.json", final)
   return final
 
@@ -260,6 +279,8 @@ def pipeline(state):
   if (src_dir / "task.md").is_file():
     state["texts"]["task.md"] = (src_dir / "task.md").read_text(errors="replace")
   state["runtime"]["input_files"] = len(input_files)
+  _log("case", "case loaded", case_id=state["case_id"], contract_keys=len(state["contract"]),
+       inputs=len(input_files), errors=len(state["errors"]), degradations=len(state["degradations"]))
   dump_json(dst_dir / "result.json", {"case_id": state["case_id"], "status": "partial", "result": None,
                           "claims": [], "uncertainties": [], "sources": state["sources"],
                           "note": "first-pass partial shell",
@@ -274,6 +295,7 @@ def pipeline(state):
                                             "facts are reported.")
   else:
     note_change({"step": "readings", "note": "absorbed %s" % readings_path})
+  _log("readings", "visual channel", path=(readings_path or "none"), error=(readings_error or None))
   figure_map, image_coverage, missing_images = {}, [], []
   raster_paths = [p for p in input_files if (RA.magic_kind(p) if RA else "") in ("png", "bmp", "jpeg", "tiff")]
   for p in raster_paths[:8]:
@@ -300,6 +322,10 @@ def pipeline(state):
       missing_images.append(r)
       state["uncertainty"].setdefault("missing_materials", []).append(r)
   state["figures"] = figure_map
+  _log("figures", "rasters inspected", figures=len(figure_map),
+       traceable=sum(1 for f in figure_map.values() if f.get("traceable")),
+       axes_fitted=sum(1 for f in figure_map.values() if (f.get("axes") or {})),
+       missing_images=len(missing_images))
   table_records = []
   for p in input_files:
     kind, source_key = (RA.magic_kind(p) if RA else ""), str(p.relative_to(src_dir))
@@ -314,6 +340,8 @@ def pipeline(state):
         note_degrade("%s: Office container kept as text source; cells not parsed" % source_key)
     except Exception as e:
       note_degrade("%s: table extraction failed (%s)" % (source_key, e))
+  _log("tables", "literal tables copied", records=len(table_records),
+       required=len(required_tables))
   if table_records:
     dump_json(dst_dir / "tables.json", table_records)
     for i, t in enumerate(table_records):
@@ -359,6 +387,7 @@ def pipeline(state):
       wr = csv.DictWriter(fh, fieldnames=csv_fields, extrasaction="ignore")
       wr.writeheader()
       for r in digitized_rows: wr.writerow(r)
+  _log("digitize", "series traced", points=len(digitized_rows), file=bool(digitized_rows))
   dump_json(dst_dir / "figure_structure.json", figure_map)
   claim_list = []
   for i, c in enumerate(readings_doc.get("claims") or [], 1):
@@ -374,6 +403,8 @@ def pipeline(state):
         "readability": c.get("readability") or "undetermined",
         "conditions": c.get("conditions") or "as shown in the supplied material"})
   state["claims"] = claim_list
+  _log("claims", "claims mapped", claims=len(claim_list),
+       uncertainties=len(state["uncertainties"]))
   for u in readings_doc.get("uncertainties") or []: note_uncertainty(u if isinstance(u, dict) else {"note": str(u)})
   for x in readings_doc.get("pending_human") or []: note_pending(x if isinstance(x, dict) else {"item": str(x)})
   tally = {"required_images": len(required_images), "images_analyzed": len(image_coverage),
@@ -397,6 +428,9 @@ def pipeline(state):
     state["uncertainty"]["scope"] = ("analysed objects only; unlisted figures or "
                                   "tables are declared gaps")
   state["uncertainty"]["counts"] = tally
+  _log("payload", "result assembled", status=state["status"], figures=len(figure_map),
+       tables=len(table_records), claims=len(claim_list), digitized_points=len(digitized_rows),
+       missing_images=len(missing_images), missing_tables=len(missing_tables))
 
 
 def make_parser():
@@ -443,6 +477,12 @@ def main_entry(argv=None):
                     "input_dir": str(src_dir), "output_dir": str(dst_dir),
                     "raster_ops": "ok" if RA else IMPORT_ERR[:120]}}
   if not RA: state["degradations"].append("raster_ops import failed: %s" % IMPORT_ERR)
+  if A is not None:
+    try: A.start_log(dst_dir, sys.argv, src_dir)
+    except Exception: pass
+  _log("boot", "figure-evidence-lens runner started", version=VERSION,
+       python=sys.version.split()[0], input=str(src_dir), output=str(dst_dir),
+       cwd=str(Path.cwd()), argv=" ".join(sys.argv[1:]))
   try:
     pipeline(state)
   except Exception:
@@ -454,6 +494,9 @@ def main_entry(argv=None):
       state["runtime"].update({"duration_s": round(time.time() - started, 2), "finished_utc": utc_stamp()})
       finalize_result(state)
     except Exception:
+      try:
+        if A is not None: A.fallback(state["out"], "finalize failed")
+      except Exception: pass
       try:
         dump_json(state["out"] / "result.json", {
             "case_id": state.get("case_id", "unknown-case"), "status": "input_error",
