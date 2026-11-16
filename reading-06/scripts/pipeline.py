@@ -10,6 +10,19 @@ import argparse, csv, json, re, sys, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import checks as V
+try:                       # additive layer: five audit assets (patch increment); never fatal
+    import assets as A
+except Exception:
+    A = None
+SUMMARY_KEYS = ("golden_standard", "diff_report", "version_history", "run_log", "self_check")
+
+
+def _log(_stage, msg="", **kv):
+    if A is not None:
+        try:
+            A.log(_stage, msg, **kv)
+        except Exception:
+            pass
 
 TEXT_KEYS = ("text", "content", "body", "passage", "paragraph", "abstract", "summary", "caption", "sentence")
 ID_KEYS, SECTION_KEYS = ("paragraph_id", "para_id", "pid", "block_id", "id"), ("section", "section_name", "heading", "part", "chapter")
@@ -59,14 +72,21 @@ def cli(argv=None):
     ap.add_argument("--draft", help="optional explicit draft file, default <work>/draft.json")
     a = ap.parse_args(argv)
     inp, out, work = resolve_input(a.input), resolve_output(a.output, "output"), resolve_output(a.work, "work")
+    if A is not None:
+        try:
+            A.start_log(out, sys.argv, inp, out, a.stage)
+        except Exception:
+            pass
+    _log("boot", "pipeline start", phase=a.stage, input=inp, output=out, work=work)
     errs, degr = [], []
+    doc, msg = None, ""
     try:
         if a.stage == "prepare":
             q = stage_prepare(inp, out, work, errs, degr)
             msg = "prepare finished: fields=%d units=%d tables=%d" % (len(q[1]), len(q[2]), len(q[3]))
         else:
-            d = stage_finalize(inp, out, work, errs, degr, a.draft)
-            msg = "finalize finished: status=%s coverage=%s" % (d["status"], d["result"]["coverage"])
+            doc = stage_finalize(inp, out, work, errs, degr, a.draft)
+            msg = "finalize finished: status=%s coverage=%s" % (doc["status"], doc["result"]["coverage"])
     except Exception as e:
         import traceback
         errs.append({"stage": "fatal", "detail": "%s: %s" % (type(e).__name__, e), "trace": traceback.format_exc()[-800:]})
@@ -75,10 +95,22 @@ def cli(argv=None):
             case = o if isinstance(o, dict) else {}
         except Exception:
             case = {}
-        write_json(out / "result.json", wrap_envelope(case.get("case_id"), "partial", {"fields": [], "coverage": tally([]), "method_notes": "the run ended on a fatal error"},
-                                       [], [], [], [], errs, degr, [{"action": "fallback partial result written"}], list(case.get("output_contract") or [])))
-        print("recovered from fatal error: a partial result was written")
-        return 0
+        doc = wrap_envelope(case.get("case_id"), "partial", {"fields": [], "coverage": tally([]), "method_notes": "the run ended on a fatal error"},
+                            [], [], [], [], errs, degr, [{"action": "fallback partial result written"}], list(case.get("output_contract") or []))
+        if A is not None:
+            try:
+                A.fallback(out, errs[-1]["detail"])
+            except Exception:
+                pass
+        write_json(out / "result.json", doc)
+        msg = "recovered from fatal error: a partial result was written"
+    if A is not None:
+        try:
+            A.finish_log((doc or {}).get("status") or ("prepared" if a.stage == "prepare" else "partial"), 0)
+            if isinstance(doc, dict):
+                A.settle(doc, out)
+        except Exception:
+            pass
     print(json.dumps({"ok": True, "message": msg, "result": str(out / "result.json")}, ensure_ascii=False))
     return 0
 
@@ -253,6 +285,7 @@ def scan_corpus(inp, case, errs, degr):
 
 
 def stage_finalize(inp, out, work, errs, degr, draft=None):
+    t0 = time.time()
     case, fs, unit_hits, tbl, src, fpath = stage_prepare(inp, out, work, errs, degr)
     dp = Path(draft) if draft else (work / "draft.json")
     d, derr = read_json(dp) if dp.is_file() else (None, "draft.json absent")
@@ -261,6 +294,7 @@ def stage_finalize(inp, out, work, errs, degr, draft=None):
         errs.append({"stage": "draft", "path": str(dp), "detail": derr, "action": "fill the draft and run finalize again"})
     else:
         by = {x["field_id"]: x for x in ((d.get("fields") if isinstance(d, dict) else d) or []) if isinstance(x, dict) and x.get("field_id")}
+    _log("draft", "draft read" if not derr else "draft missing", path=dp.name, filled=len(by), requested=len(fs))
     unc, pend, cl, ofs = [], [], [], []
     for f in fs:
         got = by.get(f["field_id"])
@@ -290,6 +324,7 @@ def stage_finalize(inp, out, work, errs, degr, draft=None):
     c = tally(ofs)
     assert c["reported"] + c["not_reported"] + c["source_conflict"] + c["extraction_failed"] == c["fields_requested"]
     ok = c["reported"] + c["not_reported"] + c["source_conflict"]
+    _log("gate", "fields gated", coverage=c, claims=len(cl), uncertainties=len(unc), pending_human=len(pend))
     doc = wrap_envelope(case.get("case_id"), "input_error" if not fs else "insufficient_evidence" if not unit_hits and not tbl else "answered" if ok == c["fields_requested"] else "partial",
                {"fields": ofs, "coverage": c, "field_dictionary": fs, "corpus": {"n_units": len(unit_hits), "n_tables": len(tbl)},
                 "search_scope_global": {"sections": sorted({u.get("section") or "unsectioned" for u in unit_hits}), "tables": [t["table_id"] for t in tbl], "sources": [x["source_id"] for x in src]},
@@ -297,7 +332,23 @@ def stage_finalize(inp, out, work, errs, degr, draft=None):
                cl, unc, src, pend, errs, degr, [{"action": "prepare", "detail": "slots were written before any value was filled"},
                                                 {"action": "finalize", "detail": "gated %d fields, coverage %s" % (len(ofs), c)}],
                list(case.get("output_contract") or []))
+    if A is not None:
+        try:
+            A.attach(out, {"case": case, "fs": fs, "units": unit_hits, "tables": tbl, "sources": src,
+                           "field_source": fpath, "inp": inp, "work": work, "errs": errs, "degr": degr,
+                           "elapsed_s": round(time.time() - t0, 3)},
+                     doc, inp, sys.argv)
+        except Exception as e:
+            errs.append({"stage": "assets", "detail": "%s: %s" % (type(e).__name__, e)})
+            _log("error", "assets attach failed", detail=str(e)[:160])
+            try:
+                A.fallback(out, "attach failed: %s" % e)
+            except Exception:
+                pass
+    for k in SUMMARY_KEYS:
+        doc.setdefault(k, None)
     write_json(out / "result.json", doc)
+    _log("result", "result.json written", status=doc.get("status"), fields=len(ofs))
     rows = []
     for x in ofs:
         r, s_, cd, q = dict.fromkeys(CSV_COLUMNS, ""), x.get("source") or {}, x.get("condition"), x.get("quote")
@@ -315,6 +366,10 @@ def stage_finalize(inp, out, work, errs, degr, draft=None):
         w = csv.DictWriter(fh, fieldnames=CSV_COLUMNS)
         w.writeheader()
         w.writerows(rows)
+    try:
+        _log("csv", "fields.csv written", rows=len(rows), bytes=(out / "fields.csv").stat().st_size)
+    except OSError:
+        pass
     return doc
 
 
@@ -336,6 +391,8 @@ def stage_prepare(inp, out, work, errs, degr):
         errs.append({"stage": "case_json", "detail": "case.json was not found in the input directory"})
     fs, fpath = discover_targets(inp, case, errs)
     unit_hits, tbl, src = scan_corpus(inp, case, errs, degr)
+    _log("scan", "corpus scanned", fields=len(fs), field_source=fpath or "-", units=len(unit_hits),
+         tables=len(tbl), sources=len(src), errors=len(errs), degradations=len(degr))
     write_json(work / "corpus_index.json", {"units": unit_hits, "tables": tbl})
     sk = blank_slots(fs)
     if not (work / "draft.json").exists():
@@ -345,6 +402,8 @@ def stage_prepare(inp, out, work, errs, degr):
                                     "corpus": {"n_units": len(unit_hits), "n_tables": len(tbl), "sections": sorted({u.get("section") or "unsectioned" for u in unit_hits})},
                                     "method_notes": "prepare done: one slot per field created; draft still empty"}, [], [], src, [], errs, degr,
                                    [{"action": "prepare", "detail": "field slots prepared"}], list(case.get("output_contract") or [])))
+    _log("prepare", "slots prepared", case_id=case.get("case_id"), fields=len(sk),
+         status="partial" if fs else "input_error")
     return case, fs, unit_hits, tbl, src, fpath
 
 
