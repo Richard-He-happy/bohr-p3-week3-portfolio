@@ -1,8 +1,8 @@
 
 import hashlib
 import re
-RULES_VERSION = 'pagegold-1'
-PKG_VERSION = '1.0.0'
+RULES_VERSION = 'pagegold-2'
+PKG_VERSION = '1.1.0'
 SECTION_LABELS = ('abstract', 'intro', 'related', 'methods', 'results', 'discussion',
                   'conclusion', 'limits', 'body')
 ROLE_SPEC = {
@@ -63,13 +63,15 @@ def inventory(pool):
                 key = (token.lower(), section)
                 if key not in numbers or weight > numbers[key]['weight']:
                     numbers[key] = dict(token=token, kind=kind, sec=section, page=record.get('page'),
-                                        weight=weight, sentence=shorten(record['text'], 110), order=order)
+                                        weight=weight, quote=record['text'], order=order)
         for match in FIGURE_RE.finditer(record['text']):
             number = int(match.group(1) or match.group(2))
-            figures.setdefault(number, dict(n=number, sec=section, page=record.get('page')))
+            figures.setdefault(number, dict(n=number, sec=section, page=record.get('page'),
+                                            quote=record['text']))
         for match in TABLE_RE.finditer(record['text']):
             number = int(match.group(1) or match.group(2))
-            tables.setdefault(number, dict(n=number, sec=section, page=record.get('page')))
+            tables.setdefault(number, dict(n=number, sec=section, page=record.get('page'),
+                                           quote=record['text']))
     return dict(numbers=sorted(numbers.values(), key=lambda row: (-row['weight'], row['order'])),
                 figures=sorted(figures.values(), key=lambda row: row['n']),
                 tables=sorted(tables.values(), key=lambda row: row['n']),
@@ -90,14 +92,24 @@ def _required_numbers(items, availability, section_labels):
         if lowered in seen:
             continue
         seen.add(lowered)
-        required.append(dict(token=item['token'], kind=item['kind'], locator=item['locator']))
+        required.append(dict(token=item['token'], kind=item['kind'], locator=item['locator'],
+                             quote=shorten(item.get('quote'), 400)))
         if len(required) >= 3:
             break
     return required
-def build_golden(pages, inv, meta, requested=None):
+def _page_evidence(key_points, required, citations):
+    evidence = [dict(kind='quote', locator=point['locator'], quote=point['quote'])
+                for point in key_points if point['basis'] == 'source']
+    evidence += [dict(kind='number', token=item['token'], locator=item['locator'],
+                      quote=item.get('quote') or '') for item in required]
+    evidence += [dict(kind=item['kind'], n=item['n'], locator=item['locator'],
+                      quote=item.get('quote') or '') for item in citations]
+    return evidence
+def build_golden(pages, inv, meta, requested=None, source_text=''):
     available = set(inv['sections'])
     figure_pages, table_pages = {}, {}
     rows = []
+    evidence_items, evidence_verified = 0, 0
     for page_number, page in enumerate(pages, 1):
         role = page['role']
         spec = ROLE_SPEC.get(role) or ROLE_SPEC['background']
@@ -105,16 +117,18 @@ def build_golden(pages, inv, meta, requested=None):
         expected = [label for label in declared if label in available]
         collapsed = bool(declared) and len(available) <= 1
         number_items = [dict(token=item['token'], kind=item['kind'], sec=item['sec'],
-                             locator=_locator(meta, item))
+                             locator=_locator(meta, item), quote=item.get('quote'))
                         for item in inv['numbers'] if item['sec'] in expected]
         required = _required_numbers(number_items, available, expected)
         primary = expected[:1]
         duty = primary[0] if primary else ''
         citations = []
         if duty and duty not in figure_pages:
-            citations = [dict(kind='figure', n=item['n'], locator=_locator(meta, item))
+            citations = [dict(kind='figure', n=item['n'], locator=_locator(meta, item),
+                              quote=item.get('quote'))
                          for item in inv['figures'] if item['sec'] in primary][:2]
-            citations += [dict(kind='table', n=item['n'], locator=_locator(meta, item))
+            citations += [dict(kind='table', n=item['n'], locator=_locator(meta, item),
+                               quote=item.get('quote'))
                           for item in inv['tables'] if item['sec'] in primary][:2]
             if citations:
                 figure_pages[duty] = page_number
@@ -123,6 +137,37 @@ def build_golden(pages, inv, meta, requested=None):
         placement = spec['fig']
         if placement == 'required_if_available':
             placement = 'required' if meta.get('has_figure') else 'not_available_in_source'
+        src = list(page.get('src') or [])
+        key_points, rows_bullets = [], list(page.get('bullets') or [])
+        for position, item in enumerate(rows_bullets):
+            text = item[0] if isinstance(item, (tuple, list)) else str(item)
+            if position < len(src):
+                record = src[position]
+                quote = record['text']
+                points = dict(index=position + 1, basis='source', level=0,
+                              bullet=shorten(text, 160), quote=quote,
+                              section=record.get('sec'), source_page=record.get('page'),
+                              locator=_locator(meta, record),
+                              verified=(quote in source_text) if source_text else None)
+            else:
+                points = dict(index=position + 1, basis='front_matter', level=0,
+                              bullet=shorten(text, 160), quote='', locator='',
+                              origin='workorder/case metadata')
+            key_points.append(points)
+        evidence = _page_evidence(key_points, required, citations)
+        verified = 0
+        for item in evidence:
+            evidence_items += 1
+            if item['kind'] == 'quote':
+                ok = bool(item['quote'] and (item['quote'] in source_text or not source_text))
+                if not source_text:
+                    ok = None
+            else:
+                ok = bool(item.get('quote') and item['quote'] in source_text) if source_text else None
+            item['verified'] = ok
+            if ok is True:
+                verified += 1
+                evidence_verified += 1
         rows.append(dict(
             page=page_number, role=role, title=shorten(page['title'], 110),
             narrative_job=spec['job'],
@@ -132,10 +177,12 @@ def build_golden(pages, inv, meta, requested=None):
             numbers_required=required, min_numbers=(spec['nums'] if expected else 0),
             citations_required=citations, figure_placement=placement,
             citation_duty=(duty or 'none'), claim_expectation=spec['claim'],
-            planned_quotes=[shorten(record['text'], 90) for record in (page.get('src') or [])]))
+            key_points=key_points, evidence=evidence,
+            planned_quotes=[shorten(record['text'], 90) for record in src]))
     headlines = [item for item in inv['numbers'] if item['sec'] in ('abstract', 'conclusion')][:6]
     deck = dict(headline_numbers=[dict(token=item['token'], kind=item['kind'],
-                                       locator=_locator(meta, item)) for item in headlines],
+                                       locator=_locator(meta, item),
+                                       quote=shorten(item.get('quote'), 400)) for item in headlines],
                 figure_numbers=[item['n'] for item in inv['figures']],
                 table_numbers=[item['n'] for item in inv['tables']],
                 sections_available=inv['sections'], pages=len(pages), requested=requested,
@@ -145,6 +192,11 @@ def build_golden(pages, inv, meta, requested=None):
                 case_id=meta.get('case_id'),
                 source=dict(label=meta.get('label'), fingerprint=inv['fingerprint'],
                             sentences=inv['sentences']),
+                evidence_totals=dict(items=evidence_items, verified=evidence_verified,
+                                     ratio=round(evidence_verified / evidence_items, 3)
+                                     if evidence_items else 0.0,
+                                     with_locator=sum(1 for row in rows for item in row['evidence']
+                                                      if item.get('locator'))),
                 deck=deck, pages=rows)
 def _section_of(locator):
     parts = str(locator or '').split()
@@ -218,7 +270,7 @@ def _check_overflow(utilization):
     return dict(ok=(utilization <= 1.0), expected='<=1.0', actual=utilization,
                 evidence='line-fit model utilization %.2f (rendered check in export_check.json)'
                          % utilization)
-def diff_golden(golden, content_map, fits, compliance):
+def diff_golden(golden, content_map, fits, compliance, counts=None):
     util_by_page = {item['i']: item['util'] for item in fits}
     rows, gaps = [], []
     for standard, delivered in zip(golden['pages'], content_map):
@@ -272,8 +324,33 @@ def diff_golden(golden, content_map, fits, compliance):
                                   ok=len(cited) == len(wanted)))
     export = dict(overall_pass=(compliance.get('export') or {}).get('matches_slides'),
                   method=(compliance.get('export') or {}).get('method'))
+    count_rows = []
+    if counts:
+        labels = [('golden standard', 'golden', 'page_golden.json pages[]'),
+                  ('page plan', 'plan', 'plan_v0.json pages[]'),
+                  ('pptx slide parts', 'pptx_slides', 'zip: ppt/slides/slideN.xml'),
+                  ('pptx notes parts', 'pptx_notes', 'zip: ppt/notesSlides/notesSlideN.xml'),
+                  ('content_map rows', 'content_map', 'result.json.content_map[]'),
+                  ('PDF pages', 'pdf_pages', 'PDF page objects')]
+        for label, key, source in labels:
+            value = counts.get(key)
+            count_rows.append(dict(artefact=label, key=key, count=value, expected=summary['pages'],
+                                   source=source,
+                                   ok=(value == summary['pages']) if value is not None else None))
+        requested = counts.get('requested')
+        matched = [row['count'] for row in count_rows if row['count'] is not None]
+        consistent = bool(matched) and all(value == summary['pages'] for value in matched)
+        shortfall = (requested is not None and requested != summary['pages'])
+        page_count = dict(rows=count_rows, consistent=consistent, verdict='PASS' if consistent else 'FAIL',
+                          requested=requested, delivered=summary['pages'], shortfall=shortfall,
+                          shortfall_note=('requested %s, delivered %d: the source sentence pool could not '
+                                          'fill the request; recorded in uncertainty'
+                                          % (requested, summary['pages'])) if shortfall else '')
+    else:
+        page_count = dict(rows=[], consistent=None, verdict='not_checked', requested=None,
+                          delivered=summary['pages'], shortfall=False, shortfall_note='')
     return dict(rules_version=RULES_VERSION, case_id=golden.get('case_id'), pages=rows, gaps=gaps,
-                summary=summary, export=export,
+                summary=summary, export=export, page_count=page_count,
                 overall=('PASS' if not gaps else ('FAIL' if summary['hard_gaps'] else 'PARTIAL')))
 def render_diff_md(diff, golden):
     summary, headline = diff['summary'], diff['summary']['headline']
@@ -301,6 +378,22 @@ def render_diff_md(diff, golden):
     lines.append('| PDF rendered | %s |' % (
         'yes (%s)' % diff['export']['method'] if diff['export']['overall_pass'] else 'no / degraded'))
     lines.append('| overall | **%s** |' % diff['overall'])
+    page_count = diff.get('page_count') or {}
+    lines += ['', '## Page-count consistency', '']
+    if page_count.get('rows'):
+        lines += ['| artefact | count | expected pages | consistent | source |', '|---|---|---|---|---|']
+        for row in page_count['rows']:
+            count = 'not read' if row['count'] is None else row['count']
+            verdict = 'n/a' if row['ok'] is None else ('PASS' if row['ok'] else 'FAIL')
+            lines.append('| %s | %s | %s | %s | %s |' % (
+                row['artefact'], count, row['expected'], verdict, row['source']))
+        lines.append('')
+        lines.append('- verdict: **%s** (golden standard, page plan, pptx slides/notes, content_map and '
+                     'PDF must all agree)' % page_count.get('verdict'))
+        if page_count.get('shortfall_note'):
+            lines.append('- note: %s' % page_count['shortfall_note'])
+    else:
+        lines.append('Not checked: no page-count counts were passed to this renderer.')
     lines += ['', '| # | role | title | verdict | hard gaps | soft gaps |', '|---|---|---|---|---|---|']
     for row in diff['pages']:
         lines.append('| %d | %s | %s | %s | %s | %s |' % (
@@ -320,6 +413,21 @@ def render_diff_md(diff, golden):
             actual = ', '.join(str(item) for item in actual) if isinstance(actual, list) else str(actual)
             lines.append('| %s | %s | %s | %s | %s |' % (
                 name, shorten(expected, 70), shorten(actual, 70), status, shorten(check['evidence'], 110)))
+        standard = golden['pages'][row['page'] - 1] if row['page'] - 1 < len(golden['pages']) else {}
+        frozen = standard.get('evidence') or []
+        lines.append('')
+        lines.append('Golden evidence frozen before the build (locator + verbatim quote):')
+        for item in frozen[:5]:
+            tag = item.get('kind') or 'quote'
+            if item.get('token'):
+                tag += ' ' + item['token']
+            elif item.get('n'):
+                tag += ' %s' % item['n']
+            lines.append('- `%s` · %s · "%s"' % (item.get('locator') or 'no locator', tag,
+                                                shorten(item.get('quote'), 130)))
+        if not frozen:
+            lines.append('- none on this page: it carries front matter only, so there is no source '
+                         'quote to freeze (no quote is invented)')
         lines.append('')
     lines += ['## Gap index', '']
     if not diff['gaps']:
@@ -336,10 +444,11 @@ def render_diff_md(diff, golden):
               '```', 'Only the timestamps vary between runs; the standard and this diff are deterministic '
               'in the source text plus the workorder.']
     return '\n'.join(lines) + '\n'
-def version_history(records, case_id, lineage):
+def version_history(records, case_id, lineage, context=None):
     lines = ['# Version history — %s' % case_id, '']
-    lines.append('Two layers: the **package lineage** (what changed between skill versions and how to roll '
-                 'back) and the **run record** (what this execution did, in which order).')
+    lines.append('Two layers: the **package lineage** (version changes and how to roll back) and the '
+                 '**run record** (what this execution did, in order). The run record is appended at '
+                 'runtime; the lineage is static.')
     lines += ['', '## Package lineage', '', '| version | date | change | why | rollback |', '|---|---|---|---|---|']
     for note in lineage:
         lines.append('| %s | %s | %s | %s | %s |' % (
@@ -350,19 +459,34 @@ def version_history(records, case_id, lineage):
         lines.append('| %s | %s | %s | %s | %s |' % (
             record.get('step'), record.get('time'), record.get('version'),
             record.get('artifact') or '-', shorten(record.get('detail'), 150)))
+    context = context or {}
+    if context:
+        lines += ['', '## Run environment', '', '| item | value |', '|---|---|']
+        for label, key in (('run id', 'run_id'), ('command', 'command'), ('python', 'python'),
+                           ('platform', 'platform'), ('working directory', 'cwd'),
+                           ('tool chain', 'tools'), ('started (UTC)', 'started'),
+                           ('elapsed seconds', 'elapsed'), ('exit code', 'exit_code'),
+                           ('status', 'status')):
+            value = context.get(key)
+            if value is not None and value != '':
+                lines.append('| %s | %s |' % (label, shorten(str(value), 200)))
+        lines += ['', '## Delivered artefacts', '',
+                  '| artefact | bytes | written by |', '|---|---:|---|']
+        for item in context.get('assets') or []:
+            lines.append('| %s | %s | %s |' % (item.get('name'), item.get('bytes', '-'),
+                                               item.get('stage', 'run')))
     lines += ['', '### Stage notes', '']
     for record in records:
         if record.get('note'):
             lines.append('- **%s** · %s: %s' % (record.get('version'), record.get('step'), record['note']))
     lines += ['', '## Rollback targets', '', '| target | command | effect |', '|---|---|---|']
     lines.append('| v0 page skeleton | `--reuse-plan <out>/plan_v0.json` | rebuild from the recorded plan '
-                 '(roles, titles, quote texts) instead of re-planning; the plan hash is printed in `run.log` |')
-    lines.append('| behaviour without the new checks | `--no-golden` | write only the core result fields and '
-                 'files; skip golden/diff/export/template inspection |')
-    lines.append('| legacy section labels | `--legacy-sections` | restore one label per page (the old flat '
-                 'heading detection) |')
-    lines.append('| earlier package build | restore the previous `scripts/` tree from the release archive | '
-                 'byte-level rollback of the code, artifacts are untouched |')
+                 '(roles, titles, quote texts); the plan hash is printed in `run.log` |')
+    lines.append('| behaviour without the checks | `--no-golden` | core fields only; skip golden/diff/export/'
+                 'template inspection (format compliance and the closing self-check still run) |')
+    lines.append('| legacy section labels | `--legacy-sections` | restore one label per page |')
+    lines.append('| pre-patch build (v1.0.0) | restore the pre-patch `scripts/` tree from the release archive '
+                 '(kept as `slides-02_orig`); the new artefacts are additive |')
     lines += ['', 'No rollback deletes an artifact: the flags only change what the current run writes, so an '
               'older `presentation.pptx` survives until a run overwrites it.']
     return '\n'.join(lines) + '\n'
