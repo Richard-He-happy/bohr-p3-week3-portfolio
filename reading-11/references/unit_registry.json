@@ -1,0 +1,644 @@
+{
+ "format": "unit-registry/2",
+ "version": "2.0.0",
+ "about": "自建单位登记表。units 每条给出：符号 symbol、量纲向量 dims、到基准值的仿射系数 to_base 与平移 shift（value_base = value*to_base + shift）、可接受的拼写 spellings。基准量纲见 dimensions；复合单位按 * 与 / 逐项累加量纲指数，规范单位由 signature_targets 查表，查不到时以基准单位派生。",
+ "dimensions": [
+  [
+   "M",
+   "kg"
+  ],
+  [
+   "L",
+   "m"
+  ],
+  [
+   "T",
+   "s"
+  ],
+  [
+   "N",
+   "mol"
+  ],
+  [
+   "I",
+   "A"
+  ],
+  [
+   "K",
+   "K"
+  ],
+  [
+   "A",
+   "rad"
+  ],
+  [
+   "F",
+   "1"
+  ]
+ ],
+ "prefixes": [
+  [
+   "Y",
+   1e+24
+  ],
+  [
+   "Z",
+   1e+21
+  ],
+  [
+   "E",
+   1e+18
+  ],
+  [
+   "P",
+   1000000000000000.0
+  ],
+  [
+   "T",
+   1000000000000.0
+  ],
+  [
+   "G",
+   1000000000.0
+  ],
+  [
+   "M",
+   1000000.0
+  ],
+  [
+   "k",
+   1000.0
+  ],
+  [
+   "h",
+   100.0
+  ],
+  [
+   "da",
+   10.0
+  ],
+  [
+   "d",
+   0.1
+  ],
+  [
+   "c",
+   0.01
+  ],
+  [
+   "m",
+   0.001
+  ],
+  [
+   "u",
+   1e-06
+  ],
+  [
+   "n",
+   1e-09
+  ],
+  [
+   "p",
+   1e-12
+  ],
+  [
+   "f",
+   1e-15
+  ],
+  [
+   "a",
+   1e-18
+  ]
+ ],
+ "units": [
+  {
+   "sym": "1",
+   "dirs": {},
+   "to_base": 1.0,
+   "shift": 0.0,
+   "spellings": [
+    "dimensionless",
+    "counts",
+    "count",
+    "times"
+   ]
+  },
+  {
+   "sym": "ppth",
+   "dirs": {
+    "F": 1
+   },
+   "to_base": 0.001,
+   "shift": 0.0,
+   "spellings": [
+    "‰"
+   ]
+  },
+  {
+   "sym": "ppb",
+   "dirs": {
+    "F": 1
+   },
+   "to_base": 1e-09,
+   "shift": 0.0,
+   "spellings": []
+  },
+  {
+   "sym": "ppm",
+   "dirs": {
+    "F": 1
+   },
+   "to_base": 1e-06,
+   "shift": 0.0,
+   "spellings": []
+  },
+  {
+   "sym": "%",
+   "dirs": {
+    "F": 1
+   },
+   "to_base": 0.01,
+   "shift": 0.0,
+   "spellings": [
+    "percent",
+    "pct"
+   ]
+  },
+  {
+   "sym": "rad",
+   "dirs": {
+    "A": 1
+   },
+   "to_base": 1.0,
+   "shift": 0.0,
+   "spellings": [
+    "radian",
+    "radians"
+   ]
+  },
+  {
+   "sym": "deg",
+   "dirs": {
+    "A": 1
+   },
+   "to_base": 0.017453292519943295,
+   "shift": 0.0,
+   "spellings": [
+    "degree",
+    "degrees",
+    "°"
+   ]
+  },
+  {
+   "sym": "A",
+   "dirs": {
+    "I": 1
+   },
+   "to_base": 1.0,
+   "shift": 0.0,
+   "spellings": [
+    "amp",
+    "amps",
+    "ampere"
+   ]
+  },
+  {
+   "sym": "N",
+   "dirs": {
+    "M": 1,
+    "L": 1,
+    "T": -2
+   },
+   "to_base": 1.0,
+   "shift": 0.0,
+   "spellings": [
+    "newton",
+    "newtons"
+   ]
+  },
+  {
+   "sym": "W",
+   "dirs": {
+    "M": 1,
+    "L": 2,
+    "T": -3
+   },
+   "to_base": 1.0,
+   "shift": 0.0,
+   "spellings": [
+    "watt",
+    "watts"
+   ]
+  },
+  {
+   "sym": "cal",
+   "dirs": {
+    "M": 1,
+    "L": 2,
+    "T": -2
+   },
+   "to_base": 4.184,
+   "shift": 0.0,
+   "spellings": [
+    "calorie",
+    "calories"
+   ]
+  },
+  {
+   "sym": "Wh",
+   "dirs": {
+    "M": 1,
+    "L": 2,
+    "T": -2
+   },
+   "to_base": 3600.0,
+   "shift": 0.0,
+   "spellings": []
+  },
+  {
+   "sym": "eV",
+   "dirs": {
+    "M": 1,
+    "L": 2,
+    "T": -2
+   },
+   "to_base": 1.602176634e-19,
+   "shift": 0.0,
+   "spellings": []
+  },
+  {
+   "sym": "J",
+   "dirs": {
+    "M": 1,
+    "L": 2,
+    "T": -2
+   },
+   "to_base": 1.0,
+   "shift": 0.0,
+   "spellings": [
+    "joule",
+    "joules"
+   ]
+  },
+  {
+   "sym": "psi",
+   "dirs": {
+    "M": 1,
+    "L": -1,
+    "T": -2
+   },
+   "to_base": 6894.757293168361,
+   "shift": 0.0,
+   "spellings": []
+  },
+  {
+   "sym": "torr",
+   "dirs": {
+    "M": 1,
+    "L": -1,
+    "T": -2
+   },
+   "to_base": 133.32236842105263,
+   "shift": 0.0,
+   "spellings": [
+    "Torr",
+    "mmHg"
+   ]
+  },
+  {
+   "sym": "atm",
+   "dirs": {
+    "M": 1,
+    "L": -1,
+    "T": -2
+   },
+   "to_base": 101325.0,
+   "shift": 0.0,
+   "spellings": [
+    "atmosphere"
+   ]
+  },
+  {
+   "sym": "bar",
+   "dirs": {
+    "M": 1,
+    "L": -1,
+    "T": -2
+   },
+   "to_base": 100000.0,
+   "shift": 0.0,
+   "spellings": []
+  },
+  {
+   "sym": "Pa",
+   "dirs": {
+    "M": 1,
+    "L": -1,
+    "T": -2
+   },
+   "to_base": 1.0,
+   "shift": 0.0,
+   "spellings": [
+    "pascal",
+    "pascals"
+   ]
+  },
+  {
+   "sym": "F",
+   "dirs": {
+    "K": 1
+   },
+   "to_base": 0.5555555555555556,
+   "shift": 255.37222222222223,
+   "spellings": [
+    "°F",
+    "°f",
+    "degF",
+    "fahrenheit"
+   ]
+  },
+  {
+   "sym": "C",
+   "dirs": {
+    "K": 1
+   },
+   "to_base": 1.0,
+   "shift": 273.15,
+   "spellings": [
+    "°C",
+    "°c",
+    "degC",
+    "degc",
+    "celsius",
+    "oC"
+   ]
+  },
+  {
+   "sym": "K",
+   "dirs": {
+    "K": 1
+   },
+   "to_base": 1.0,
+   "shift": 0.0,
+   "spellings": [
+    "kelvin"
+   ]
+  },
+  {
+   "sym": "M",
+   "dirs": {
+    "N": 1,
+    "L": -3
+   },
+   "to_base": 1000.0,
+   "shift": 0.0,
+   "spellings": [
+    "molar"
+   ]
+  },
+  {
+   "sym": "mol",
+   "dirs": {
+    "N": 1
+   },
+   "to_base": 1.0,
+   "shift": 0.0,
+   "spellings": [
+    "mole",
+    "moles"
+   ]
+  },
+  {
+   "sym": "L",
+   "dirs": {
+    "L": 3
+   },
+   "to_base": 0.001,
+   "shift": 0.0,
+   "spellings": [
+    "l",
+    "liter",
+    "litre",
+    "liters",
+    "litres"
+   ]
+  },
+  {
+   "sym": "g",
+   "dirs": {
+    "M": 1
+   },
+   "to_base": 0.001,
+   "shift": 0.0,
+   "spellings": [
+    "gram",
+    "grams",
+    "gm"
+   ]
+  },
+  {
+   "sym": "m",
+   "dirs": {
+    "L": 1
+   },
+   "to_base": 1.0,
+   "shift": 0.0,
+   "spellings": [
+    "meter",
+    "metre",
+    "meters",
+    "metres"
+   ]
+  },
+  {
+   "sym": "d",
+   "dirs": {
+    "T": 1
+   },
+   "to_base": 86400.0,
+   "shift": 0.0,
+   "spellings": [
+    "day",
+    "days"
+   ]
+  },
+  {
+   "sym": "h",
+   "dirs": {
+    "T": 1
+   },
+   "to_base": 3600.0,
+   "shift": 0.0,
+   "spellings": [
+    "hr",
+    "hrs",
+    "hour",
+    "hours",
+    "H"
+   ]
+  },
+  {
+   "sym": "min",
+   "dirs": {
+    "T": 1
+   },
+   "to_base": 60.0,
+   "shift": 0.0,
+   "spellings": [
+    "minute",
+    "minutes",
+    "mins"
+   ]
+  },
+  {
+   "sym": "s",
+   "dirs": {
+    "T": 1
+   },
+   "to_base": 1.0,
+   "shift": 0.0,
+   "spellings": [
+    "sec",
+    "secs",
+    "second",
+    "seconds"
+   ]
+  }
+ ],
+ "reject_tokens": [
+  "arbitrary units",
+  "undetermined",
+  "arb. units",
+  "a.u./a.u.",
+  "arb units",
+  "arb.units",
+  "intensity",
+  "counts/s",
+  "unclear",
+  "unknown",
+  "sigma",
+  "a.u.",
+  "abs.",
+  "arb.",
+  "n.a.",
+  "rel.",
+  "s.u.",
+  "abs",
+  "arb",
+  "cnt",
+  "n.a",
+  "rel",
+  "tbd",
+  "au",
+  "na",
+  "?",
+  "x",
+  "×"
+ ],
+ "signature_targets": [
+  [
+   "F^1",
+   "%"
+  ],
+  [
+   "F^1|T^-1",
+   "%/h"
+  ],
+  [
+   "",
+   "1"
+  ],
+  [
+   "T^-1",
+   "1/h"
+  ],
+  [
+   "I^1",
+   "A"
+  ],
+  [
+   "L^2|M^1|T^-2",
+   "J"
+  ],
+  [
+   "M^1|T^-2",
+   "J/m2"
+  ],
+  [
+   "K^1",
+   "K"
+  ],
+  [
+   "L^3",
+   "L"
+  ],
+  [
+   "L^1|M^1|T^-2",
+   "N"
+  ],
+  [
+   "L^-1|M^1|T^-2",
+   "Pa"
+  ],
+  [
+   "L^2|M^1|T^-3",
+   "W"
+  ],
+  [
+   "M^1|T^-3",
+   "W/m2"
+  ],
+  [
+   "A^1",
+   "deg"
+  ],
+  [
+   "M^1",
+   "g"
+  ],
+  [
+   "L^-2|M^1|T^-1",
+   "g/m2/h"
+  ],
+  [
+   "L^1",
+   "m"
+  ],
+  [
+   "L^-3|M^1",
+   "mg/L"
+  ],
+  [
+   "L^-3|M^1|T^-1",
+   "mg/L/h"
+  ],
+  [
+   "N^1",
+   "mol"
+  ],
+  [
+   "N^1|L^-3",
+   "mol/L"
+  ],
+  [
+   "N^1|L^-3|T^-1",
+   "mol/L/h"
+  ],
+  [
+   "N^1|L^-2|T^-1",
+   "mol/m2/h"
+  ],
+  [
+   "T^1",
+   "s"
+  ]
+ ],
+ "conventions": [
+  "仿射换算：after = before * factor + offset，factor 与 offset 由源单位与目标规范单位各自的 to_base/shift 推出。",
+  "温度只在纯温度量纲时使用平移项；复合单位中的温度只参与比例换算。",
+  "百分数、ppm、ppb、‰ 属于 fraction 量纲，不会被误当作无量纲计数，也不会把 0.5 自动改写成 50 %。",
+  "斜杠按从左到右依次取倒数解析：mg/L/h 即 mg 每升每小时。",
+  "量纲签名不在 signature_targets 时，用 dimensions 的基准单位拼出派生规范单位，并在变更记录里说明为派生。",
+  "reject_tokens 中的字符串、空单位与不可解析 token 一律不换算，转人工确认。"
+ ]
+}
