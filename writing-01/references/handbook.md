@@ -107,3 +107,25 @@
 | 章节出现在 `missing_required_sections` | 标题写法与关键词不匹配 | 用带编号的标准标题 |
 | 稿件出现材料外数值 | 草稿里自行换算或估算 | 删掉，或换成材料原值并注明换算方式 |
 | 参考文献少了 DOI | 材料本来没给 | 保留缺项，写进 `pending_human`，不要补造 |
+
+## 8. 五件可核验资产（patch v1.1.0）
+
+`build` 在输出目录写出 5 个文件，供评审逐项复核；字段细节见 `SKILL.md` 的「五件可核验资产」一节。
+
+| 文件 | 关键字段 | 复核方式 |
+|-|-|-|
+| `golden_standard.json` | `items[]`：`id/group/expected/check/locator/quote/basis/source_file/verbatim_verified/note`；`counts.by_group/by_basis/verbatim`；`expected` 汇总 | 按 `locator` 打开源文件核对 `quote`；`basis=contract` 项看 `note` 的推导依据 |
+| `diff_report.md` | 每行：金标准项 / 实际 / 判定（pass/missing/deviation/record）/ 原因；「关键一致性数字」表 | 先看 `missing` 与 `deviation` 清单；`record` 为人工语义项 |
+| `version_history.md` | 静态版本表 + 回退方式 + 「本次运行（runtime append）」段 | 对照 `run.log` 与 `result.json.runtime` 是否一致 |
+| `run.log` | 每行 `[累计耗时] [+阶段耗时] [阶段] 说明 kv`；末行 `[exit] exit_code=0 status=...` | 检查阶段是否完整、哪一步降级 |
+| `self_check.json` | `checks[]`：`id/claim/expected/actual/ok/evidence`；`pass/passed/total/skipped`；`probes`；`exit_code_assertion` | 任一 `ok=false` 需修复；`ok=null` 为环境不允许的 skipped 检查 |
+
+机器判据速查：
+
+- **S1** 契约键齐全（`output_contract` 键 + 五常驻字段）；**S2** 主产物存在可评；
+- **S3** 引文逐字命中率与 `number_audit.hit_rate`；**S4** `facts/evidence/sections/materials/changes` 计数自洽；
+- **S5** 五资产字节 > 0；**S6/S7** 空输入、坏 JSON 子进程实测 exit 0 且 5 资产非空；
+- **S8** 同一输入两次运行结构一致（幂等）；**S9** `status` 与错误/拒收/证据数逻辑一致；
+- **S10** 5 个资产摘要已回填 `result.json`；**S11** 退出码断言（主流程与子进程均 0）。
+
+`CHAPTER_ASSET_PROBE=0` 只跳过 S6/S7/S8 子进程实测（记 skipped），其余照常。
