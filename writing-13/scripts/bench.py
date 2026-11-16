@@ -15,7 +15,7 @@ import kernel as KN
 import ledger as AST
 from kernel import compose_anchors, compose_tasks, trim, jstr, kappa, canon, fill, score, dhash, aggregate, write_csv, write_meta
 
-KVER = "1.0.0"; AVER = "1.0.0"; START = time.time(); CHAR_CAP = 400000
+KVER = "1.1.0"; AVER = "1.0.0"; START = time.time(); CHAR_CAP = 400000
 STYLE = json.loads((Path(__file__).resolve().parent.parent / "references" / "stylepack.json").read_text("utf-8"))
 LANG = STYLE.get("msg", {})
 UNIT = (r"(?:wt%|vol%|mg/mL|mg/L|µg/mL|ug/mL|mmol/L|µmol/L|umol/L|µM|uM|mM|nM|pM|mg|µg|ug|ng|pg|kg|mL|µL|uL|"
@@ -199,12 +199,14 @@ def cli():
         FAULTS.append({"stage": "output", "error": str(e)}); DEGRADED.append({"stage": "output", "note": LANG.get("fallback_out")})
         out = Path("output"); out.mkdir(parents=True, exist_ok=True)
     brief = {}
+    case_raw = ""
     cpath, why = locate_case(inp) if inp.is_dir() else (None, "input dir missing")
     if why: FAULTS.append({"stage": "case", "error": why})
     AST.trace("find_case", status="ok" if cpath else "missing", path=cpath.name if cpath else "-", note=why or "")
     if cpath:
         try:
-            brief = json.loads(cpath.read_text("utf-8", "replace"))
+            case_raw = cpath.read_text("utf-8", "replace")
+            brief = json.loads(case_raw)
             if not isinstance(brief, dict): brief = {}; FAULTS.append({"stage": "case", "error": "case file is not a json object"})
         except Exception as e:
             FAULTS.append({"stage": "case", "error": "bad json: %s" % e})
@@ -230,7 +232,8 @@ def cli():
     qty = max(6, min(12, want or 6)) if docs else 0
     items, ANCH, grid, tally, revs, calib, main_rows = [], [], [], [], [], [], []
     state = dict(case_id=cid, status="partial", docs=docs, elapsed=0.0, py=sys.version.split()[0],
-               ratee_note=LANG.get("no_ratee"), big=0, biglist="", partial_written=True)
+               ratee_note=LANG.get("no_ratee"), big=0, biglist="", partial_written=True,
+               case_text=case_raw, case_name=(cpath.name if cpath else "case.json"))
     stable = True
     try:
         if not docs:
@@ -312,12 +315,6 @@ def cli():
             receipts.append({"item": str(k), "required": trim(v, 160), "status": "executed" if tk else "acknowledged",
                         "applied_value": len(items) if tk else None})
     state["elapsed"] = time.time() - START; state["errors"] = FAULTS
-    asset_refs = {}
-    try:
-        asset_refs = AST.build_assets(out, brief, state, items, ANCH, docs, grid, tally, revs, FAULTS, DEGRADED, HOLD, payload, stable) or {}
-    except Exception as e:
-        FAULTS.append({"stage": "assets", "error": "%s: %s" % (type(e).__name__, e)})
-        AST.fallback_assets(out, e, state)
     hashes = [dict(path=d["path"], sha256=d["sha256"], chars=len(d["text"])) for d in docs + submissions]
     FACT_KEYS = ("fact_id", "kind", "value", "locator", "quote", "doc_id", "verbatim")
     payload.update(status=state["status"], pending_human=HOLD, errors=FAULTS, degradations=DEGRADED, changes=EDITS,
@@ -339,6 +336,14 @@ def cli():
                             "has_manuscript": bool(submissions), "toolkit": ARTIFACTS if items else []})
     if not EDITS:
         payload["change_log"] = [{"target": "output", "action": "no_source_edit", "reason": LANG.get("no_edit")}]
+    # The asset layer runs on the final semantic payload, so golden/diff/self-check can compare
+    # against what is actually shipped instead of predicting it.
+    asset_refs = {}
+    try:
+        asset_refs = AST.build_assets(out, brief, state, items, ANCH, docs, grid, tally, revs, FAULTS, DEGRADED, HOLD, payload, stable) or {}
+    except Exception as e:
+        FAULTS.append({"stage": "assets", "error": "%s: %s" % (type(e).__name__, e)})
+        AST.fallback_assets(out, e, state)
     payload.update(asset_refs)
     (out / "result.json").write_text(jstr(payload), encoding="utf-8")
     try:
