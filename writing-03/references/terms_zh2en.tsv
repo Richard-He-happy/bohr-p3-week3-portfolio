@@ -1,0 +1,93 @@
+# 中英概念对照表（writing-03 术语归一，Tab 分隔：中文短语 <TAB> 英文概念词）
+# 用途：把中文论断/原稿里的术语换成英文概念词，便于与英文文献做词面匹配。
+# 规则：一个中文短语可以对多个英文同义词（空格分隔，会全部进入匹配集合）；
+#       只收录确认为同义的术语，避免把不同概念强行等同；长词优先替换。
+# 维护：按学科在对应分组下追加，改写后建议跑一次 smoke 测试确认召回未下降。
+#
+# --- 营养与暴露 ---
+维生素D	vitamin d vitamin
+维生素	vitamin
+补充剂	supplementation supplement
+补充	supplementation supplement
+缺乏	deficiency deficient
+低水平	low
+水平	level
+剂量	dose
+暴露	exposure
+干预	intervention
+安慰剂	placebo
+#
+# --- 疾病与结局 ---
+呼吸道感染	respiratory infection
+呼吸道	respiratory tract
+感染	infection
+发病率	incidence
+发生率	incidence
+患病率	prevalence
+死亡率	mortality
+住院	hospitalization hospitalisation
+结局	outcome
+终点	endpoint
+不良事件	adverse events
+安全	safety
+# --- 效应与统计 ---
+风险	risk
+风险升高	higher risk
+效应	effect
+效应量	effect size
+差异	difference
+无差异	no difference
+显著	significant
+不显著	no significant
+置信区间	confidence interval
+相关	associated correlation
+关联	association
+因果	causal
+导致	causes leads to
+降低	reduced lower decreased
+升高	increased higher
+改善	improved
+有效	effective
+无效	no effect
+效应方向	direction of effect
+#
+# --- 研究设计 ---
+系统评价	systematic review
+荟萃分析	meta analysis
+综述	review
+指南	guideline
+共识	consensus
+随机对照试验	randomized trial
+随机	randomized
+对照	controlled
+试验	trial
+队列	cohort
+前瞻	prospective
+纵向	longitudinal
+随访	follow-up
+横断面	cross sectional
+病例对照	case control
+病例报告	case report
+预印本	preprint
+体外	in vitro
+动物	mice rats animal
+细胞	cell
+#
+# --- 人群与样本 ---
+样本	sample
+受试者	participants
+患者	patients
+成人	adults
+儿童	children child
+老年人	older adults elderly
+小鼠	mice
+大鼠	rats
+基线	baseline
+#
+# --- 机制与讨论 ---
+机制	mechanism
+通路	pathway
+尚未明确	unclear unknown not established
+局限性	limitation
+可推广性	generalizability
+在本样本中	in this sample
