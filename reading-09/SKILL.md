@@ -1,7 +1,7 @@
 ---
 name: repro-audit-runbook
 description: Turn a paper's reported numbers into a runnable audit — execute the bundled candidate implementations for real, lock the acceptance band before anything runs, diff observed against reported metrics, assign a cause to every gap, and deliver a graded verdict plus machine-readable artifacts a reviewer can replay.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Reproduction Audit Runbook
@@ -207,6 +207,8 @@ scripts/cli.py               front end: paths, init, show, check, doctor, dispat
 scripts/pipeline.py          build orchestration, reported values, band freeze, publish
 scripts/experiment.py        candidate discovery, execution, metric parsing, diff, render
 scripts/audit_lib.py         extraction, quote matching, tolerance math, contract fill
+scripts/assets.py            five evidence assets emitted at the end of build
+scripts/assets_render.py     markdown renderers for diff_report/version_history/run.log
 references/draft_format.md   draft field dictionary and failure examples
 references/audit_rules.md    band priors, comparison formula, causes, verdicts, replay
 ```
