@@ -1,7 +1,7 @@
 ---
 name: mindmap-evidence-forge
-description: 把 /input 里的科研材料锻造成一张可继续编辑、可逐条回溯的思维导图。脚本承担材料索引、引文逐字核验、层级与规模体检、树形布局、SVG/位图输出和 output_contract 回填；Agent 承担主题、分支、节点与跨分支关系的判断。产物包括 mindmap.svg（真实 text/tspan，可直接改）、mindmap.json（结构真源 + 布局坐标）、mindmap_preview.png、node_evidence.csv（节点→locator/逐字引文）、coverage_report.md、pending_human.json 与键名完整的 result.json。适用于论文与综述结构梳理、实验方案、项目计划、会议决策、概念体系梳理等「材料→导图」任务。
-version: 1.0.0
+description: 把 /input 里的科研材料锻造成一张可继续编辑、可逐条回溯的思维导图。脚本承担材料索引、引文逐字核验、层级与规模体检、树形布局、SVG/位图输出和 output_contract 回填；Agent 承担主题、分支、节点与跨分支关系的判断。产物包括 mindmap.svg（真实 text/tspan，可直接改）、mindmap.json（结构真源 + 布局坐标）、mindmap_preview.png、node_evidence.csv（节点→locator/逐字引文）、coverage_report.md、pending_human.json 与键名完整的 result.json；build 另写 5 件可核验资产（金标准 golden_standard.json、逐项对照 diff_report.md、版本史 version_history.md、真实运行日志 run.log、机器自检 self_check.json）。适用于论文与综述结构梳理、实验方案、项目计划、会议决策、概念体系梳理等「材料→导图」任务。
+version: 1.1.0
 ---
 
 # 材料 → 可核验思维导图（mindmap-evidence-forge）
@@ -31,10 +31,14 @@ version: 1.0.0
 | `coverage_report.md` | 覆盖与结构说明（账目式，不写口号） | 脚本 | 与 `audit_report.json` 计数一致 |
 | `pending_human.json` | 必须人工确认的清单 | 脚本 | 每条带 kind 与具体问题 |
 | `golden_standard.json` | 金标准：每项期望及其出处 | 脚本 | 看 `source.verified` |
+| `diff_report.md` | 实际产物 vs 金标准逐项对照（达标/偏差/缺失/待定） | 脚本 | 每行对应金标准一项；非达标项有理由 |
+| `version_history.md` | 版本史 v0→v1.0.0→v1.1.0 + 回退方式 + 运行段 | 脚本 | 回退命令可执行；运行段与 `run.log` 对得上 |
+| `run.log` | 真实运行日志（跨命令阶段时间线） | 脚本 | 时序可核对；`/app/work` 与 `/app/output` 各一份 |
+| `self_check.json` | 机器自检断言（契约/主产物/引文/计数/兜底/退出码/版本） | 脚本 | `summary.pass` 总判，失败项见 `summary.failed` |
 | `audit_report.json` | 逐项对照（达标/偏差/缺失/待定）+ 自检 + 探针 | 脚本 | 重跑 build 计数可复现 |
 | `result.json` | 平台契约交付 | 脚本 | 契约键一个不少、键名不改 |
 
-工作区（不入交付）：`/app/work/index.json`（材料索引）、`/app/work/mindmap.json`（**Agent 工作稿**）、`/app/work/check.json`、`/app/work/run.log`。
+工作区（不入交付）：`/app/work/index.json`（材料索引）、`/app/work/mindmap.json`（**Agent 工作稿**）、`/app/work/check.json`；`run.log` 同时写 `/app/work` 与 `/app/output`（交付件，供核对运行时序）。
 
 ## 运行环境与四步流水线
 
@@ -182,6 +186,20 @@ Agent 的活集中在第 2 步：用 `show` 拿到 `[p.3¶2]` 这类 locator，�
 
 所有分支的共同底线：**退出码恒 0**，且 `/app/output/result.json` 始终是合法 JSON。
 
+## 五件可核验资产（`build` 写入 `/app/output`）
+
+`build` 除主产物外固定再写 5 件资产；空/坏输入也写（诚实标注缺口），供评审按文件核对而非看自述。
+
+| 资产 | 内容 | 复核方式 |
+|---|---|---|
+| `golden_standard.json` | 按 `output_contract` + 题面 + 材料锚点的逐项期望：13 条结构规则（节点 15–40、层级 ≤4、分支 3–6、每支 2–5 子节点、七型关系、标签唯一且 ≤20 字、数字可溯、契约完整等，每项带 `source.locator` + 逐字 `quote`）、材料分支锚点、关系方向表、契约字段期望（`case.json#/output_contract/<键>` + 逐字值） | `kind=material` 的 quote 贴回原文逐字命中；`skill_rule` 的 locator 指向包内文档行 |
+| `diff_report.md` | 实际产物 vs 金标准逐项对照：每条期望的 达标/偏差/缺失/待定 + 实际 + 偏差说明 + 来源；另含契约回填表、字节表、可复算指标、偏差处置、复跑方法 | 每行对应金标准一项；非达标项有理由与处置 |
+| `version_history.md` | 静态版本史 v0→v1.0.0→v1.1.0 + 回退方式（整包/只回退资产/只回退版本号）+ 每次 build 追加运行段 | 回退命令可执行；运行段与 `run.log` 对得上 |
+| `run.log` | 真实阶段时间线：init/show/check/build、资产落盘、探针、降级，跨命令追加 | 时序可核对，不含伪造成功记录 |
+| `self_check.json` | 20 项机器断言：契约键齐全/值非空/case_id 回显/status 诚实、SVG 可解析含 `<text>`、PNG 魔数、引文逐字命中、CSV/JSON 计数一致、金标准完整、diff 判定合法、5 资产非空、run.log 非空、空/坏输入兜底、退出码恒 0、版本一致、自检自身可回读 | `summary.pass=true` 即全绿，`summary.failed` 列失败断言 |
+
+`result.json` 只增不改：新增 `verifiable_assets` 与 `diff_report`/`version_history`/`run_log`/`self_check` 路径计数，契约键同名时让位契约；最终自检失败时 `status` 从 `ok` 降为 `partial` 并写 `degradations`（不伪造通过）。
+
 ## 提交前自检
 
 `build` 自动跑并在 `audit_report.json` 的 `checks[]` 留痕（`summary.pass` 为总判）：
@@ -193,6 +211,7 @@ Agent 的活集中在第 2 步：用 `show` 拿到 `[p.3¶2]` 这类 locator，�
 5. JSON 节点数 = CSV 行数 = SVG 组数（C8）；预览是否真 PNG（C9）。
 6. 空输入 / 坏 JSON / 极小材料三个真实子进程探针（C10–C12，`--no-probe` 可跳过并标注未探测）。
 7. 人工抽查：随机 3 条边的方向是否符合上表；3 条 quote 是否逐字命中；`mindmap.svg` 里改一个字是否生效。
+8. 5 件资产是否齐全且非空、`self_check.json.summary.pass` 是否为 true、`diff_report.md` 是否逐项有判定——由 `assets.py` 在 finalize 后复核，失败把 status 降为 partial。
 
 `check` 的 error 必须清零再 build：`theme_missing`、`nodes_empty`、`node_unverified`、`hierarchy_cycle`、`edge_dropped`（端点/类型非法）为 error；`label_long`、`label_dup`、`granularity_skew`、`fanout_wide`、`number_untraced`、`role_missing`、`depth_deep`、`node_many`、`node_few` 为 warn。
 
@@ -236,6 +255,7 @@ scripts/mmio.py                 材料读入（扩展名+魔数、pdftotext、do
 scripts/mmcore.py               词表、工作稿规范化、引文核验、树形布局、契约回填、附件写入
 scripts/golden.py               金标准（每项期望带出处）+ 逐项对照 + 要求覆盖对账
 scripts/audit.py                结构体检、兜底成稿、自检探针、审计落盘
+scripts/assets.py               5 件可核验资产：diff_report / version_history / run.log / self_check + 金标准兜底
 references/node-edge-spec.md    schema、词表、定位口径、可复用检查清单
 ```
 
@@ -249,5 +269,6 @@ references/node-edge-spec.md    schema、词表、定位口径、可复用检查
 | 版本 | 变更 | 兼容性 |
 |---|---|---|
 | 1.0.0 | 首版：四步流水线、七型关系、逐字引文核验、几何位图回退、审计报告与三个真实探针 | — |
+| 1.1.0 | build 额外写 5 件可核验资产（golden_standard / diff_report / version_history / run.log / self_check）；`result.json` 增量 `verifiable_assets` 等字段；SKILL.md 增资产小节。原入口、CLI、路径、退出码、契约字段与 8 件原产物不变 | 向下兼容，只增不改 |
 
 上游若改契约字段名，只需在 `mmcore.CONTRACT_RULES` 增补一条正则，不必改流程；新增节点角色要先加进 `mmcore.ROLE_ZH`，否则会被降级为 `subtopic`。
