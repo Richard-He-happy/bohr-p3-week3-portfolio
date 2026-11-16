@@ -1,7 +1,7 @@
 ---
 name: paper-deck-architect
 description: 把单篇论文（PDF/DOCX/MD/TXT，可附目标模板或起始稿 pptx）重构为可直接上台讲的学术汇报演示：先产出页级骨架与逐页证据映射（页码/章节/图 N/表 N + 论文原句），再生成继承模板母版与版式的可编辑 .pptx、真实可解析的 PDF 预览、逐页 content_map，并把整份结果回填进 result.json 的 output_contract。用于论文转学术 PPT、paper-to-slides、组会/周会汇报、学术会议报告、论文答辩预演、按单位模板改稿等场景。
-version: 1.0.0
+version: 1.1.0
 ---
 
 # 论文 → 学术汇报演示（paper-deck-architect）
@@ -16,6 +16,7 @@ version: 1.0.0
 - 三个路径参数都有默认值（`/input`、`/app/output`、`/app/work`），可只覆盖其中一部分。
 - 输入侧约定：`<case>/case.json`、`<case>/task.md`、论文文件；可选 `artifacts/` 下的 workorder 与模板/起始稿。
 - 输出侧约定：`presentation.pptx`、`presentation.pdf`、`plan.json`、`deck_model.json`、`result.json`；中间目录里另有 `verification.json` 与 `structure_check.json`。
+- 每次运行收尾还会在输出目录写出五件可核验资产：`golden_standard.json`、`diff_report.md`、`version_history.md`、`run.log`、`self_check.json`（见 §9；摘要路径并入 `result.json`）。
 - 依赖只有 Python 3.8+ 标准库。`pdftotext`、`soffice`/`libreoffice`、`office-renderer` 都是可选探测器：能发现就用，装不了就走降级路径，**绝不因此失败**。
 - 进程退出码恒为 `0`。失败不是用 exit code 表达，而是写进 `result.json` 的 `errors` / `exceptions` / `degradations`。
 - 时间预算：单进程跑完，普通论文秒级；不启动后台任务、不联网、不写全局状态。
@@ -52,6 +53,7 @@ version: 1.0.0
 - **逐页证据图**：deck 每一页一条记录，含页码、标题、角色、一句话主张、要点、证据数组（类型/编号/定位/逐字引文/是否命中）、资源说明与讲稿；另附覆盖率统计。
 - **自检块**：页数、模板继承、密度、讲稿覆盖与重复率、图引用、数字白名单、证据覆盖、文件级检查，以及本包新增的两项投影一致性检查（见 §6）。
 - **诚实块**：`exceptions`（缺什么）、`degradations`（降级了什么）、`pending_human`（要人确认什么）、`uncertainty`（哪里不确定）、`changes`（相对输入改了什么）、`sources`（材料与抽取来源）、`runtime`（耗时与请求数）、`errors`（运行期异常）。
+- **资产摘要块（v1.1.0 新增）**：`golden_standard`、`diff_report`、`version_history`、`run_log`、`self_check` 五个字段，值是产物目录里的相对路径 + 摘要（页数/达标数/字节数/自检 pass 等）。这五个字段属于审计增量，`output_contract` 原有键一个不少、不改名、顺序不动。
 
 字段级的完整字典、引文比对规则和全部阈值集中在 `references/result-contract.md`，实现代码只有 `deckgen.py` 一处，改阈值时两边同步。
 
@@ -112,6 +114,7 @@ version: 1.0.0
 | 要求页数过小（<3） | 页数预算算不出证据页 | 角色收缩到最小主线，`slide_count.ok=false` 如实上报 |
 | 版式没有正文占位符 | 占位符扫描为空 | 安全区内放绝对定位文本框；母版与主题照旧继承 |
 | case.json 缺失/损坏 | JSON 解析失败或文件不存在 | 转 `input_error` 或 `partial`，仍写合法信封，退出 0 |
+| 五件资产写出失败 | `assetkit` 的单项/整体异常 | 隔离成最小合法文件并记 `degradations`，主产物与契约字段不受影响，退出 0 |
 
 所有分支的共同点：**先落盘 partial，再继续改进**。哪怕后续全崩，`/app/output/result.json` 里也有一份带契约键、带异常说明的半成品可以取证。
 
@@ -124,6 +127,7 @@ version: 1.0.0
 3. **事实一致性**：引文命中、数字白名单、图表编号匹配。
 4. **文件级**：pptx 能否当 zip 打开、必需部件是否齐、XML 能否解析、slide/notes 部件数；PDF 是否 `%PDF-`、页数是否等于要求。
 5. **投影一致性（本包新增）**：`content_map_completeness` 逐行断言八键齐全且主张/证据/讲稿非空；`structure_consistency` 重开 pptx 断言 slide 部件数、notes 部件数、content_map 行数、计划页数四者相等且行号连续。
+6. **交付后自检回执（v1.1.0 新增）**：收尾时把上述检查连同「契约键完整性 / 五件资产存在且非空 / 导出件真实（PDF `%PDF-`、PNG IHDR）/ 空输入与坏 JSON 兜底探测 / 退出码 0」写成 `self_check.json`（每项带 expected / actual / status），并核对 `golden_standard.json` 页数与 pptx 页数一致。
 
 任何一项失败都会写进 `failures` 并把 `pass` 置为 false；结构审计失败同样会拉低 `pass`。评分维度与检查项的对应关系、提交前清单与已知边界在 `references/rubric-map.md`。
 
@@ -153,8 +157,28 @@ python3 scripts/deckgen.py --input ./case --output ./out --work ./work
 | `SKILL.md` | 本文件：对外契约与做法说明 |
 | `scripts/deckgen.py` | 输入发现、句段解析、页级模型、自检、结果信封 |
 | `scripts/ooxml_kit.py` | 文本抽取链、pptx 装配（模板手术/内置包）、PDF 预览、文件级校验 |
+| `scripts/assetkit.py` | 五件可核验资产：页级金标准、逐页 diff、版本历史、运行日志、机器自检；单件失败隔离 |
 | `references/slide-blueprint.md` | 角色阶梯、页数预算、逐页上限、讲稿模式、投影示例 |
 | `references/result-contract.md` | 结果信封字段字典、引文判定、阈值、状态判定 |
 | `references/rubric-map.md` | 评分维度映射、提交前清单、已知边界 |
 
-版本 1.0.0。修改规则时：先改本文件与 `references/rubric-map.md` 的版本号，再改阈值常量，最后用示例材料重跑一遍确认 `compliance_checks.pass=true`。本包不含任何预制答案、正式案例结果或预渲染成品。
+## 9. 可核验资产（五件，finalize 时生成到输出目录）
+
+每次运行收尾都会在产物目录写出下列五件资产；它们不改变入口、CLI 与契约键，只把“结果可核验”落成可打开、可复算的文件：
+
+| 资产 | 内容 | 怎么核验 |
+|---|---|---|
+| `golden_standard.json` | 页级金标准：逐页列期望标题/角色/要点/证据/图表/讲稿与页数预算。每个期望项带 `basis`：`input_quote` 项带论文 locator + 逐字 quote（并记回查结论 `matched`），工作单项带 `case.json` 键路径 + 逐字 JSON 片段，无可引用来源的展示标签明确标 `basis=contract` | 打开 JSON 逐页比对；`coverage.by_basis` 给出来源计数，`coverage.verbatim` 给逐字命中率，`coverage.unmatched` 列出未命中项 |
+| `diff_report.md` | 逐页 diff：实际 pptx 每页（运行时重新解压读回文本）vs 金标准（达标/缺失/偏差 + 原因），并单列金标准/计划/pptx slide/notes/content_map/PDF 六者页数一致性检查 | 看 §1 总览与 §2 页数一致性结论；§3 是逐页表，§4 只在有缺口时列明细 |
+| `version_history.md` | 静态版本记录 v0 → v1.0.0 → v1.1.0（每版改了什么、为什么）+ 回退方式（整包回滚 / 只关资产 / 只回退本次运行段）+ 末尾“本次运行”段 | 按 §3 回退表操作；§5 记录本次 case、命令、状态与主产物哈希 |
+| `run.log` | 真实运行日志：启动参数、逐阶段名称/距上一行耗时/状态（ok/degraded/error）、收尾转写降级与异常、退出码 | 按阶段定位耗时与降级来源；运行中逐行 flush，不是事后补写 |
+| `self_check.json` | 机器自检回执（`self_check.v1`）：契约键完整性、pptx 页数/notes 数/content_map 行数/金标准页数一致、导出件真实（PDF `%PDF-` + 页数；PNG 存在时校验 IHDR）、空输入与坏 JSON 兜底探测、退出码 0，逐项 expected/actual/status | 看 `pass`/`passed`/`skipped`/`failed`；`skipped` 表示该场景本次不适用（如无模板、契约不产出 PNG），不是伪造通过 |
+
+使用约定：
+
+1. 五件资产只写产物目录，不写包内、不写全局状态、不联网；每次运行按本次产物重新生成。
+2. 资产里不放正式案例答案或预渲染成品：金标准全部来自本次输入材料的逐字抽取，抽不到的项记 `contract` 或进 `pending_human`。
+3. `result.json` 的五个摘要字段（`golden_standard`/`diff_report`/`version_history`/`run_log`/`self_check`）是审计增量；原契约键集合与顺序不变。
+4. 任何一件资产写出失败都会被隔离成最小合法文件并记入 `degradations`，主产物与退出码不受影响。
+
+版本 1.1.0。修改规则时：先改本文件与 `references/rubric-map.md` 的版本号，再改阈值常量，最后用示例材料重跑一遍确认 `compliance_checks.pass=true`。本包不含任何预制答案、正式案例结果或预渲染成品。
