@@ -34,6 +34,9 @@ python3 -B <skill>/scripts/audit_claims.py --help
 
 - 主脚本 `scripts/audit_claims.py`，辅助模块 `scripts/evidence_kit.py`（读文件、切段、信号词检测、quote 定位）。
   两个文件用 `Path(__file__).resolve().parent` 互相定位，换工作目录也能跑。
+- 另有可选资产层 `scripts/claim_assets.py`：每次运行在写 `result.json` 后再写五件可核验资产
+  （金标准、逐项 diff、版本历史、运行日志、机器自检），**不新增命令、不改参数、不改变退出码**；
+  细节见第十四节。
 - 默认输入目录 `/input`，默认输出目录 `/app/output`（脚本会自动创建）。
 - `--max-seconds` 是软时间预算，默认 780 秒；耗尽后还没核验的 claim 记 `not_processed_budget`，
   已核验部分照常输出。
@@ -172,6 +175,8 @@ locator 形如 `{unit_id: R2, section: Results, page: 3}`；整体 verdict 同�
 - [ ] 冲突卡两侧都有 locator + quote，判定带保留。
 - [ ] coverage 计数自洽；未报告项进 uncertainties；待人工项进 pending_human。
 - [ ] self_check.passed 为 true；不为 true 时按 issues 修完再交付。
+- [ ] 五件资产齐全（golden_standard.json / diff_report.md / version_history.md / run.log /
+      self_check.json）且 `self_check.json` 的 `pass` 为 true；空/坏输入仍退出码 0。
 - [ ] 空输入、坏 JSON、缺 claims 三种情况都能产出合法 partial 结果且退出码 0。
 
 ## 十二、文件与版本
@@ -181,6 +186,7 @@ SKILL.md                            本说明
 scripts/audit_claims.py             主流程：拆解 → 检索 → 定级 → 落盘
 scripts/evidence_kit.py             语料读取、切段、信号词、quote 定位、卡片序列化、报告渲染
 scripts/result_packaging.py         收尾结构自检与证据逐字回查（两个纯函数）
+scripts/claim_assets.py             五件可核验资产：金标准/diff/版本/日志/机器自检
 references/support-levels.md        四级判定规范与限制标签字典
 references/claim-splitting.md       拆分规则、子判断类型、证据卡 schema、复核仲裁
 references/interface-contract.md    输入发现、输出字段、状态语义、异常、最小示例
@@ -194,3 +200,24 @@ references/interface-contract.md    输入发现、输出字段、状态语义�
   `references/support-levels.md`，并在提交说明里附改前/改后对照案例。
 - 新增材料格式只改 `evidence_kit.collect_corpus`，产物 schema 保持稳定。
 - 保持确定性：不引入随机、不依赖网络；同一输入重复运行必须得到同一 verdict，方便同条件复现取证。
+
+## 十四、五件可核验资产（每次运行自动写出）
+
+写终版 `result.json` 后，`scripts/claim_assets.py` 再写五件资产到同一输出目录；**不新增命令、
+不改参数、不改变退出码**。`result.json` 只多一个 `verifiable_assets` 摘要键（各文件 path/bytes/sha256），
+原契约字段一个不少。
+
+| 文件 | 内容 | 怎么核验 |
+|---|---|---|
+| `golden_standard.json` | 金标准：按 output_contract 逐项列出期望交付（claim/证据/判定/定位） | 每条带 `locator` 与逐字 `quote`，按 locator 回 `/input` 原文检索 |
+| `diff_report.md` | 实际产物 vs 金标准逐项对照 | `met`/`deviation`/`missing`/`needs_review` 汇总 + 逐项表 + 偏差清单 |
+| `version_history.md` | 静态 v0→v1.0.0 演进与回退方式，末尾追加本次运行段 | 第 3 节给四种回退操作；第 5 节是本次运行实况 |
+| `run.log` | 真实运行日志（阶段事件、降级记录、退出码） | 逐阶段有时间戳与计数，末行 `[exit] exit_code=0` |
+| `self_check.json` | 机器自检回执：契约/主产物/引文/计数/兜底/退出码 | 看 `pass` 与 `checks[]`；空/坏输入在 `fallback_tests` |
+
+- 金标准由**独立词面重扫**生成（自建分词与方向/否定/锚点规则，不读判定引擎中间对象），
+  所以 diff 是真实对照而非自证；它是**自建金标准，不是组织方隐藏答案**。
+- 回退：删除 `scripts/claim_assets.py` 即回到 1.0.0 主路径（`audit_claims.py` 中 `A=None` 自动跳过），
+  或按 `version_history.md` 第 3 节用备份整体覆盖。
+- 自检/对照未通过时资产仍会写出，`self_check.json` 与 `diff_report.md` 会指出问题；主流程不中断，
+  退出码仍为 0。
