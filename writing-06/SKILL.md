@@ -33,13 +33,13 @@ version: 1.0.0
 |---|---|
 | 原始输入 | `/input/case.json`（缺失时递归找 `case*.json`）+ `/input` 下任意材料 |
 | 工作目录 | `/app/work`：`index.json`、`draft.json`、`check_report.json` |
-| 产物目录 | `/app/output`：`manuscript.md`、`results_map.json`、`evidence_map.json`、`preserved_facts.json`、`change_log.json`、`result.json` |
+| 产物目录 | `/app/output`：`manuscript.md`、`results_map.json`、`evidence_map.json`、`preserved_facts.json`、`change_log.json`、`result.json`，以及 `build` 末尾生成的 5 个核验资产：`golden_standard.json`、`diff_report.md`、`version_history.md`、`run.log`、`self_check.json` |
 | 入口 | `python3 scripts/rd_sections.py {init\|check\|build}` |
 | 可选参数 | `--input` / `--work` / `--out`（默认 `/input`、`/app/work`、`/app/output`，可用 `SKILL_INPUT`/`SKILL_WORK`/`SKILL_OUT` 覆盖）、`--draft`（默认 `<work>/draft.json`） |
 | 依赖 | Python 3 标准库；不联网；不依赖当前工作目录 |
 | 退出码 | 恒为 0；任何异常都会留一份合法 `result.json` |
 
-`result.json` 原样回填输入 `output_contract` 的全部键（不改名、不漏键，缺值 `null`/`[]`），并附 `case_id`、`status`、`sources`、`uncertainty`、`pending_human`、`errors`、`degradations`、`changes`、`metrics`、`runtime`、`output_contract`、`contract_fields`。
+`result.json` 原样回填输入 `output_contract` 的全部键（不改名、不漏键，缺值 `null`/`[]`），并附 `case_id`、`status`、`sources`、`uncertainty`、`pending_human`、`errors`、`degradations`、`changes`、`metrics`、`runtime`、`output_contract`、`contract_fields`；`build` 还会另挂 5 个核验资产字段 `golden_standard`、`diff_report`、`version_history`、`run_log`、`self_check`（见 §15.1）。
 
 `status` 取值：`ok`（工作稿 + 0 error）、`partial`（兜底稿 / 有 error / 补写了缺节）、`insufficient_evidence`（无任何可读文本块）、`input_error`（输入目录不可用）。
 
@@ -53,7 +53,7 @@ python3 scripts/rd_sections.py init --input /input --work /app/work --out /app/o
 # 3) 自检：有 error 就改工作稿，不要改材料
 python3 scripts/rd_sections.py check --input /input --work /app/work --out /app/output
 
-# 4) 成稿：拼 manuscript.md + 四份映射 + 最终 result.json
+# 4) 成稿：manuscript.md + 四份映射 + 最终 result.json + 5 个核验资产
 python3 scripts/rd_sections.py build --input /input --work /app/work --out /app/output
 ```
 
@@ -195,6 +195,11 @@ python3 scripts/rd_sections.py build --input /input --work /app/work --out /app/
 | `preserved_facts.json` | 事实 → 引文 → locator → `verified` |
 | `change_log.json` | `changes`、`pending_human`、`degradations` |
 | `result.json` | 契约回填 + 状态 + 来源 + 指标 + 自检 |
+| `golden_standard.json` | 金标准：按 `output_contract` 逐键列出期望章节/字段/结果项；材料能支撑的项带 `locator` + 逐字 `quote`，无来源项 `basis: contract` |
+| `diff_report.md` | 实际产物 vs 金标准逐项对照：达标 / 偏差 / 缺失 + 原因与处置 |
+| `version_history.md` | `references/version_history.md` 的副本（v0 → v1.0.0：改了什么/为什么/如何回退）+ 本次运行段 |
+| `run.log` | 真实运行日志（追加写）：每阶段起止、耗时、退出码、降级、异常 |
+| `self_check.json` | 机器自检回执：契约键完整性、主产物存在性、引文逐字命中率、计数一致性、空/坏输入兜底、退出码恒 0 |
 
 契约键的路由：含 `deliver`/`manuscript`/`正文` → 主产物；`result.?map`/`readout`/`读数` → results_map；`preserv`/`fact`/`事实` → 事实表；`evidence`/`source`/`证据`/`来源` → 证据表；`change`/`log`/`修改` → 修改记录；`uncertain`/`pending`/`人工` → 待确认项；`limit`/`局限` → 局限与缺口；其余键返回 `{"status": "not_separately_produced", "see": [...]}`。
 
@@ -215,18 +220,34 @@ python3 scripts/rd_sections.py build --input /input --work /app/work --out /app/
 
 人工复核三条（脚本不替代判断）：读数单位是否与图注一致；讨论里的"不一致"是否真的写了可能原因；`pending_human` 里每条是否都能落到具体图表或文献条目。
 
+### 15.1 五个核验资产（build / finalize 生成）
+
+`build` 在写完原有 6 个产物后，再生成 5 个可核验资产到 `/app/output`，并把摘要挂到 `result.json` 同名字段。全部纯标准库生成；资产生成失败只记降级，不影响主产物与退出码。
+
+| 资产 | 回答的问题 | 关键内容 | 判据 |
+|---|---|---|---|
+| `golden_standard.json` | 期望交付什么 | 按 `output_contract` 逐键列出期望字段/章节/结果项；材料能支撑的项带 `locator` + 逐字 `quote`，无来源项 `basis: contract` | 每项有 `basis`；`verification.quote_hit_rate` 由材料反查 |
+| `diff_report.md` | 实际 vs 期望差在哪 | 逐项对照表：达标 / 偏差 / 缺失 + 原因；末尾给偏差项处置 | 契约项看 `result.json` 非空；章节看标题与局限条数；读数看正文或 `results_map`；事实看引文命中 |
+| `version_history.md` | 改过什么、怎么回退 | 静态部分 v0 → v1.0.0（改了什么/为什么/回退步骤/文件指纹），运行期追加本次运行段 | 静态段来自 `references/version_history.md`，运行段由本次真实数据填充 |
+| `run.log` | 这次怎么跑的 | 追加写：每条命令起止、阶段耗时、退出码、降级项、异常 | `event=done ... exit=0` 至少一条；异常以 `event=error` 记录 |
+| `self_check.json` | 机器敢不敢签字 | 7 项检查：契约键完整、主产物存在、引文逐字命中率、计数一致、空/坏输入兜底（真实执行探针）、退出码恒 0、run.log 完整 | `checks` 全 true 时 `overall_pass=true`；失败项同时进 `result.json.degradations` |
+
+空输入 / 坏 `case.json` 时 5 个资产仍生成（金标准只含契约项、diff 记录缺失原因、self_check 的降级探针如实记录），退出码仍为 0。
+
 ## 16. 包内文件、版本与维护
 
 ```
 SKILL.md                        本文件：用途、契约、工作稿 schema、写作规则、降级
 scripts/rd_sections.py          入口：init / check / build，兜底稿合成与规则审计
+scripts/rd_assets.py            5 个核验资产生成器（build 末尾调用，永不抛异常）
 scripts/rd_material.py          材料层：切块与 locator、数字与单位、表格列角色、缺口扫描、成稿拼装、自检
 references/pipeline-contract.md  字段细则：locator、draft.json、result.json、产物 map
 references/section-rules.md      写作细则：观察句槽位、讨论四拍、强度梯度、局限四层、检查清单
 references/audit-checklist.md    复核用清单：码表、抽样复核步骤、交付前逐项打勾
+references/version_history.md    静态版本记录：v0 → v1.0.0 的改动、理由、回退与文件指纹
 ```
 
-- 版本 1.0.0；纯标准库，无第三方依赖，无需安装步骤。
+- 版本 1.0.0（v0 初版 + 5 个核验资产增补，见 `references/version_history.md`）；纯标准库，无第三方依赖，无需安装步骤。
 - 改词表时同步 `rd_sections.py` 的 `CAUSAL/HYPE/BOUNDARY` 与 `references/section-rules.md`。
 - 改 schema 保持向后兼容：缺字段按空处理，未知键忽略。
 
@@ -259,5 +280,8 @@ python3 scripts/rd_sections.py build --input /input --work /app/work --out /app/
 - [ ] 结果段塞入"导致/因为"：报 `results_causal`。
 - [ ] 讨论写 `prove`：报 `overclaim`。
 - [ ] 空输入 / 坏 JSON / 缺目录：仍 exit 0，`result.json` 合法且契约键齐全。
+- [ ] `build` 后 `/app/output` 存在 5 个核验资产且均非空；`result.json` 顶层含 `golden_standard`/`diff_report`/`version_history`/`run_log`/`self_check` 五个字段。
+- [ ] `self_check.json.overall_pass == true` 且 7 项 `checks` 全真；`details.degradation_tests` 里空输入与坏 JSON 两项均 pass。
+- [ ] `run.log` 里每条命令都有 `event=done ... exit=0`，降级项与异常有记录；`version_history.md` 含 v0 → v1.0.0 与回退步骤。
 - [ ] `contract_fields.filled == contract_fields.total`；`case_id` 与输入一致。
 - [ ] 包内无 `__pycache__`/`.pyc`，无预制正式答案。
