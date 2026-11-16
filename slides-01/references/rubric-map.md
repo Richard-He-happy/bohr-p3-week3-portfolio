@@ -1,6 +1,6 @@
 # 评分维度映射、提交前清单与已知边界
 
-版本 1.0.0（与 `SKILL.md` 保持一致）。
+版本 1.1.0（与 `SKILL.md` 保持一致）。
 
 ## 1. 评分维度 → 本包实际产物
 
@@ -19,15 +19,15 @@
 | 可靠体验 10 · 调用 3 | 可被触发、一条命令、路径清晰 | `SKILL.md` §0/§2、`--help` 退出码 0 |
 | 可靠体验 10 · 稳定 4 | 能打开、不崩版、可编辑、可重跑 | `inspect_deck`（zip 成员、XML 可解析、页数）、`inspect_pdf`（头 + 页数） |
 | 可靠体验 10 · 异常 3 | 处理读不出的 PDF、缺图表标题、缺模板、页数不可行 | `exceptions[]`、`degradations[]`、`pending_human[]`、`status=partial/input_error` |
-| 生态贡献 10 · 文档 3 | 用法、依赖、模板要求、限制 | `SKILL.md` §0–§8 + 本 references 三件套 |
+| 生态贡献 10 · 文档 3 | 用法、依赖、模板要求、限制 | `SKILL.md` §0–§9 + 本 references 三件套 + 产物目录五件可核验资产 |
 | 生态贡献 10 · 复用 4 | 页骨架、证据映射、模板适配层、检查清单可复用 | `references/slide-blueprint.md`、`references/result-contract.md`、`ooxml_kit.assemble_deck()` |
 | 生态贡献 10 · 分享 3 | 可分享的方法与示例，且明确标注为示例 | `SKILL.md` §7 标注「示例，非正式案例结果」 |
 
 ## 2. 提交前逐项打勾
 
-- [x] 包根有 `SKILL.md`，frontmatter 合法（kebab-case `name`、`description`、`version: 1.0.0`）。
+- [x] 包根有 `SKILL.md`，frontmatter 合法（kebab-case `name`、`description`、`version: 1.1.0`）。
 - [x] `python3 -B scripts/deckgen.py --help` 退出码 0，且不依赖 CWD（用 `Path(__file__).resolve().parent`）。
-- [x] 仅两个脚本（`deckgen.py`、`ooxml_kit.py`），纯标准库；单脚本体积在 25 KB 以内。
+- [x] 三个脚本（`deckgen.py`、`assetkit.py`、`ooxml_kit.py`），纯标准库；资产逻辑独立成模块（`assetkit.py`），主入口不膨胀。
 - [x] 最小 case（contract + workorder + 论文 + 模板）可跑到 12 页、PDF 12 页。
 - [x] `result.json` 契约键齐全，`case_id` 原样，`status` 取值合法。
 - [x] `presentation.pptx` 可被 zipfile 打开，含 `[Content_Types].xml`、`ppt/presentation.xml`、`ppt/slides/slideN.xml`，XML 可解析，页数符合 workorder。
@@ -38,6 +38,7 @@
 - [x] 数字白名单通过；未命中的数字只进 failures，不会硬凑上页面。
 - [x] `notes_coverage` 100%，`notes_overlap` 低于阈值。
 - [x] `content_map_completeness` 与 `structure_consistency` 双通过。
+- [x] finalize 写出五件可核验资产（`golden_standard.json`/`diff_report.md`/`version_history.md`/`run.log`/`self_check.json`）且非空；`self_check.pass=true`、`diff_report` 页数一致性 PASS。
 - [x] 空输入 / 坏 JSON / 无文本层 PDF：合法 partial `result.json`、退出码 0、`exceptions` 说明白。
 - [x] 包内无预渲染正式 deck、无硬编码路径、无联网、无 `__pycache__`。
 
